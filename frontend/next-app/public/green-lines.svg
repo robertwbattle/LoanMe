@@ -1,0 +1,5 @@
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg" viewBox="100 0 100 200">
+  <!-- Zigzag Line -->
+  <polyline points="10,180 40,150 70,120 75,130 120,80 125,110 180,50" 
+            fill="none" stroke="green" stroke-width="8" />
+</svg>
