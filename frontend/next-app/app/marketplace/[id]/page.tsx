@@ -16,10 +16,11 @@ export default function LoanDetailPage() {
   const [loan, setLoan] = useState<LoanDetail | null>(null);
 
   useEffect(() => {
-    fetch(`http://localhost:5000/api/posts/${id}`)
+    fetch(`http://127.0.0.1:5000/api/posts/${id}`)
       .then(res => res.json())
       .then(data => setLoan(data));
   }, [id]);
+  
 
   if (!loan) return <p>Loading loan details...</p>;
 

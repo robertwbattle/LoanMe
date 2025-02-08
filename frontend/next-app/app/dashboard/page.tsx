@@ -1,12 +1,17 @@
 'use client';
 import { useEffect, useState } from 'react';
 
+// ✅ Define the Activity Type
+interface ActivityItem {
+  type: string;
+  details: string;
+}
+
 export default function Dashboard() {
-  const [activity, setActivity] = useState([]);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);  // ✅ Set the correct type
 
   useEffect(() => {
-    // Replace with actual API endpoint
-    fetch('http://localhost:5000/api/activity')
+    fetch('http://127.0.0.1:5000/api/activity')
       .then(res => res.json())
       .then(data => setActivity(data));
   }, []);
