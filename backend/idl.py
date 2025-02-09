@@ -29,7 +29,7 @@ idl = {
                             {
                                 "kind": "const",
                                 "type": "bytes",
-                                "value": [108, 111, 97, 110]  // "loan" in bytes
+                                "value": [108, 111, 97, 110]  # "loan" in bytes
                             },
                             {
                                 "kind": "account",

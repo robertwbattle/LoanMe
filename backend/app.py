@@ -9,7 +9,13 @@ from solana.rpc.async_api import AsyncClient
 from anchorpy import Provider, Wallet, Context, Program
 from solana.rpc.commitment import Confirmed
 from solders.instruction import Instruction, AccountMeta
-from solders.system_program import ID as SYS_PROGRAM_ID, TransferParams, transfer, create_account
+from solders.system_program import (
+    create_account,
+    CreateAccountParams,
+    ID as SYS_PROGRAM_ID,
+    TransferParams,
+    transfer
+)
 from solders.message import Message
 from solana.transaction import Transaction
 import asyncio
@@ -27,6 +33,7 @@ from idl import idl
 from base58 import b58decode
 from functools import wraps
 from solders.sysvar import RENT as SYSVAR_RENT_PUBKEY
+import struct
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -359,23 +366,19 @@ async def create_loan():
         tx.recent_blockhash = recent_blockhash.value.blockhash
         tx.fee_payer = lender_keypair.pubkey()
         
-        # Add create account instruction first
-        space = 8 + 32 + 32 + 8 + 2 + 8 + 8 + 4 + 1 + 1  # Size of LoanAccount struct
+        # Create account instruction data
+        space = 0  # Assuming space is 0 for the create account instruction
         rent = await client.get_minimum_balance_for_rent_exemption(space)
-        logger.info(f"Required rent (lamports): {rent.value}")
-        
-        # Create system program instruction to create account
-        logger.info("Creating system program instruction...")
-        create_account_ix = create_account(
-            {
-                "from_pubkey": lender_keypair.pubkey(),
-                "to_pubkey": loan_pda,
-                "space": space,
-                "lamports": rent.value,
-                "owner": program.program_id,
-            }
+        create_account_data = struct.pack('<I Q Q', 0, space, rent.value)
+
+        create_account_ix = Instruction(
+            program_id=SYS_PROGRAM_ID,
+            accounts=[
+                AccountMeta(pubkey=lender_keypair.pubkey(), is_signer=True, is_writable=True),
+                AccountMeta(pubkey=loan_pda, is_signer=False, is_writable=True),
+            ],
+            data=create_account_data
         )
-        logger.info(f"System instruction created: {create_account_ix}")
         
         logger.info("Adding instructions to transaction...")
         tx.add(create_account_ix)
@@ -391,38 +394,47 @@ async def create_loan():
         serialized_tx = tx.serialize()
         logger.info(f"Serialized transaction size: {len(serialized_tx)} bytes")
         
-        tx_sig = await client.send_raw_transaction(
-            serialized_tx,
-            opts=TxOpts(skip_preflight=True)
-        )
-        logger.info(f"Transaction sent with signature: {tx_sig}")
-        
-        # Wait for confirmation
-        logger.info("Waiting for confirmation...")
-        await client.confirm_transaction(tx_sig.value)
-        logger.info("Transaction confirmed!")
-        
-        # Fetch transaction details
-        logger.info("Fetching transaction details...")
-        tx_details = await client.get_transaction(tx_sig.value)
-        if tx_details and tx_details.value:
-            logger.info("Transaction Details:")
-            if hasattr(tx_details.value, 'meta') and tx_details.value.meta:
-                logger.info(f"Status: {tx_details.value.meta.err if tx_details.value.meta.err else 'Success'}")
-                if tx_details.value.meta.log_messages:
-                    logger.info("Program Logs:")
-                    for log in tx_details.value.meta.log_messages:
-                        logger.info(f"  {log}")
-            else:
-                logger.info("No detailed metadata available")
-        
-        return jsonify({
-            'success': True,
-            'transaction': str(tx_sig.value),
-            'loanPDA': str(loan_pda),
-            'lenderPubkey': str(lender_keypair.pubkey()),
-            'logs': tx_details.value.meta.log_messages if tx_details and tx_details.value and hasattr(tx_details.value, 'meta') and tx_details.value.meta else []
-        })
+        try:
+            tx_sig = await client.send_raw_transaction(
+                serialized_tx,
+                opts=TxOpts(skip_preflight=True)
+            )
+            logger.info(f"Transaction sent with signature: {tx_sig.value}")
+            
+            # Wait for confirmation and get transaction details
+            await client.confirm_transaction(tx_sig.value)
+            
+            # Get transaction details with proper response handling
+            tx_details = await client.get_transaction(
+                tx_sig.value, 
+                max_supported_transaction_version=0
+            )
+            
+            if tx_details and tx_details.value:
+                if hasattr(tx_details.value, 'err') and tx_details.value.err:
+                    logger.error("Transaction Error Details:")
+                    logger.error(f"Error: {tx_details.value.err}")
+                    if hasattr(tx_details.value, 'logs'):
+                        logger.error("Program Logs:")
+                        for log in tx_details.value.logs:
+                            logger.error(log)
+                    return jsonify({
+                        'success': False,
+                        'error': str(tx_details.value.err),
+                        'logs': getattr(tx_details.value, 'logs', [])
+                    }), 500
+            
+            return jsonify({
+                'success': True,
+                'signature': str(tx_sig.value)
+            })
+
+        except Exception as e:
+            logger.error(f"Error processing transaction: {str(e)}")
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
         
     except Exception as e:
         logger.error(f"Error in create_loan: {str(e)}")
@@ -623,14 +635,9 @@ async def deploy_contract():
             program_id=SYS_PROGRAM_ID,
             accounts=[
                 AccountMeta(pubkey=wallet.public_key, is_signer=True, is_writable=True),
-                AccountMeta(pubkey=program_keypair.pubkey(), is_signer=True, is_writable=True),
+                AccountMeta(pubkey=program_keypair.pubkey(), is_signer=False, is_writable=True),
             ],
-            data=(
-                bytes([0]) +
-                rent.value.to_bytes(8, 'little') +
-                program_len.to_bytes(8, 'little') +
-                bytes(BPF_LOADER_ID)
-            )
+            data=bytes([0, 0, 0, 0])  # create account instruction index
         )
         
         # Send create transaction

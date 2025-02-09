@@ -1,5 +1,5 @@
 Lib/
 Lib/*
 Lib
-
+./backend/.env
 solana_wallet.txt
