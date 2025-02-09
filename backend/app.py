@@ -565,6 +565,28 @@ async def get_loan_details(loan_pda):
 async def deploy_contract():
     try:
         logger.info("=== Starting deployment process ===")
+
+        borrower_id = request.json.get('borrower_id')
+        if borrower_id:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE Users
+                SET borrow_count = borrow_count + 1
+                WHERE user_id = ?
+            ''', (borrower_id,))
+            conn.commit()
+            conn.close()
+
+        return jsonify({
+            'message': 'borrow count updated.'
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
         
         # Get client and wallet
         client, _, wallet = await get_solana_client()
@@ -899,6 +921,17 @@ def get_user_loans(user_id):
 def pay_loan(loan_id):
     data = request.json
     amount = data.get('amount')
+    borrow_id = data.get('borrower_id')
+    if borrow_id:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE Users
+            SET successful_payments = successful_payments + 1
+            WHERE user_id = ?
+        ''', (borrow_id,))
+        conn.commit()
+        conn.close()
 
     conn = sqlite3.connect('loan_platform.db')
     cursor = conn.cursor()
@@ -910,7 +943,7 @@ def pay_loan(loan_id):
     conn.commit()
     conn.close()
 
-    return jsonify({'success': True, 'message': 'Payment successful'})
+    return jsonify({'success': True, 'message': 'Payment successful, successful_payments updated.'})
 
 # ✅ Run the Flask App
 if __name__ == '__main__':
