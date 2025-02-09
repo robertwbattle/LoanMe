@@ -22,9 +22,9 @@ body {
 
 /* app/globals.css */
 body {
-  background-color: #F5F1DA; /* Matches background */
+  background-color: #656565; /* Matches background */
   font-family: 'Inter', sans-serif;
-  color: #9BB67C; /* Default text color */
+  color: #064420; /* Default text color */
 }
 
 a {
@@ -33,5 +33,5 @@ a {
 }
 
 a:hover {
-  color: #9BB67C;
+  color: #064420;
 }
