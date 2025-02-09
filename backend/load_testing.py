@@ -1,107 +1,120 @@
-import sqlite3
 import random
-import string
-import time
-import requests
-import json
+import sqlite3
 from datetime import datetime, timedelta
+import logging
+from db import get_db_connection
 
-# Tatum API key
-TATUM_API_KEY = "t-67a7f0385e8016861a9fcd27-60fd4bd6921348ecb3ff2d79"
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Database connection
-def get_db_connection():
-    return sqlite3.connect('loan_platform.db')
+def generate_solana_address():
+    # Simulated Solana address generation (44 characters)
+    chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+    return ''.join(random.choice(chars) for _ in range(44))
 
-# Generate Solana wallet using Tatum API
-def generate_solana_wallet():
-    url = 'https://api-eu1.tatum.io/v3/solana/wallet'
-    headers = {"x-api-key": TATUM_API_KEY}
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        wallet_info = response.json()
-        address = wallet_info.get('address')
-        private_key = wallet_info.get('privateKey')
-
-        # Save wallet information to a file
-        with open('solana_wallet.txt', 'a') as f:
-            f.write(f"Address: {address}\n")
-            f.write(f"Private Key: {private_key}\n")
-
-        return address, private_key
-    else:
-        print("Error generating Solana wallet:", response.text)
-        return None, None
-
-# Generate random user data
-def generate_user():
-    email = ''.join(random.choices(string.ascii_lowercase, k=8)) + '@example.com'
-    password_hash = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
-    solana_address, solana_private_key = generate_solana_wallet()
-    return (password_hash, email, solana_address, solana_private_key)
-
-# Insert user into database
 def insert_user():
-    user = generate_user()
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO Users (password_hash, email, solana_address, solana_private_key)
-        VALUES (?, ?, ?, ?)''', user)
-    conn.commit()
-    user_id = cursor.lastrowid
-    conn.close()
-    return user_id
-
-# Generate loan posting
-def create_loan_posting(user_id):
-    post_type = random.choice(['borrow', 'lend'])
-    loan_amount = round(random.uniform(0.1, 0.3))
-    interest_rate = round(random.uniform(1, 15), 2)
-    payment_schedule_id = random.randint(1, 3)  # Assuming some schedules exist
+    email = f'user_{random.randint(1000, 9999)}@test.com'
+    password_hash = f'hash_{random.randint(1000, 9999)}'
+    solana_address = generate_solana_address()
+    solana_private_key = f'private_key_{random.randint(1000, 9999)}'
     
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO Posts (user_id, post_type, loan_amount, interest_rate, payment_schedule_id)
-        VALUES (?, ?, ?, ?, ?)''', (user_id, post_type, loan_amount, interest_rate, payment_schedule_id))
+        INSERT INTO Users (email, password_hash, solana_address, solana_private_key)
+        VALUES (?, ?, ?, ?)''', (email, password_hash, solana_address, solana_private_key))
+    user_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    return user_id, solana_address
 
-# Fulfill a loan posting
+def create_loan_posting():
+    # Create a user first to get both ID and wallet
+    user_id, wallet_address = insert_user()
+    
+    loan_amount = round(random.uniform(0.1, 10.0), 2)
+    interest_rate = round(random.uniform(1, 15), 2)
+    
+    # Randomly decide if this is a lender or borrower post
+    is_lender = random.choice([True, False])
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        INSERT INTO Posts (
+            lender_wallet,
+            borrower_wallet,
+            loan_amount,
+            interest_rate,
+            status
+        ) VALUES (?, ?, ?, ?, 'open')''', 
+        (wallet_address if is_lender else None,
+         None if is_lender else wallet_address,
+         loan_amount,
+         interest_rate))
+    
+    post_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    logger.info(f"Created {'lender' if is_lender else 'borrower'} post {post_id} with amount {loan_amount} SOL")
+    return post_id
+
 def fulfill_loan_posting():
     conn = get_db_connection()
     cursor = conn.cursor()
 
     # Select an open post
-    cursor.execute('SELECT post_id, user_id, loan_amount, interest_rate, payment_schedule_id FROM Posts WHERE status = "open" LIMIT 1')
+    cursor.execute('''
+        SELECT post_id, lender_wallet, borrower_wallet, loan_amount, interest_rate 
+        FROM Posts 
+        WHERE status = 'open' 
+        AND (lender_wallet IS NOT NULL OR borrower_wallet IS NOT NULL)
+        LIMIT 1''')
+    
     post = cursor.fetchone()
     
     if post:
-        post_id, borrower_id, loan_amount, interest_rate, payment_schedule_id = post
-
-        # Create lender
-        lender_id = insert_user()
-
-        # Insert transaction
+        post_id, lender_wallet, borrower_wallet, loan_amount, interest_rate = post
+        
+        # If post has lender, create borrower. If post has borrower, create lender
+        _, new_wallet = insert_user()
+        
+        if lender_wallet:
+            borrower_wallet = new_wallet
+        else:
+            lender_wallet = new_wallet
+            
+        # Update post with the new wallet and mark as funded
         cursor.execute('''
-            INSERT INTO Transactions (lender_id, borrower_id, post_id, loan_amount, interest_rate, payment_schedule_id, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'active')''', (lender_id, borrower_id, post_id, loan_amount, interest_rate, payment_schedule_id))
-
-        # Update post status
-        cursor.execute('UPDATE Posts SET status = "funded" WHERE post_id = ?', (post_id,))
+            UPDATE Posts 
+            SET lender_wallet = ?, 
+                borrower_wallet = ?,
+                status = 'funded' 
+            WHERE post_id = ?''', 
+            (lender_wallet, borrower_wallet, post_id))
+        
+        logger.info(f"Fulfilled post {post_id} between {lender_wallet} and {borrower_wallet}")
         
         conn.commit()
+    else:
+        logger.info("No open posts found to fulfill")
+    
     conn.close()
 
-# Continuous generation of users, loan postings, and fulfillment
-def simulate_activity():
-    for i in range(200):
-        user_id = insert_user()
-        create_loan_posting(user_id)
+def run_load_test(num_posts=10, num_fulfillments=5):
+    logger.info(f"Starting load test with {num_posts} posts and {num_fulfillments} fulfillments")
+    
+    # Create posts
+    for _ in range(num_posts):
+        create_loan_posting()
+    
+    # Fulfill some posts
+    for _ in range(num_fulfillments):
         fulfill_loan_posting()
-        print(f"User {user_id} created, posting made, and transactions processed.")
-        time.sleep(5)  # Timer set to 5 seconds for demonstration
+    
+    logger.info("Load test completed")
 
-if __name__ == '__main__':
-    simulate_activity()
+if __name__ == "__main__":
+    run_load_test()
