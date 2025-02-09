@@ -1070,6 +1070,65 @@ async def fetch_solana_balance(wallet_address):
             'error': str(e)
         }), 500
 
+@app.route('/api/posts', methods=['POST'])
+def create_post():
+    try:
+        data = request.json
+        logger.info("=== Creating New Post ===")
+        logger.info(f"Request data: {data}")
+        
+        # Extract post details
+        loan_amount = float(data['loan_amount'])
+        interest_rate = float(data['interest_rate'])
+        lender_wallet = data.get('lender_wallet')  # Optional for borrower posts
+        borrower_wallet = data.get('borrower_wallet')  # Optional for lender posts
+        
+        # Validate that at least one wallet is provided
+        if not lender_wallet and not borrower_wallet:
+            return jsonify({
+                'success': False,
+                'error': 'At least one wallet (lender or borrower) must be provided'
+            }), 400
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Insert new post
+        cursor.execute('''
+            INSERT INTO Posts (
+                lender_wallet,
+                borrower_wallet,
+                loan_amount,
+                interest_rate,
+                status
+            )
+            VALUES (?, ?, ?, ?, 'open')
+        ''', (lender_wallet, borrower_wallet, loan_amount, interest_rate))
+        
+        post_id = cursor.lastrowid
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Created post with ID: {post_id}")
+        
+        return jsonify({
+            'success': True,
+            'post_id': post_id,
+            'details': {
+                'lender_wallet': lender_wallet,
+                'borrower_wallet': borrower_wallet,
+                'loan_amount': loan_amount,
+                'interest_rate': interest_rate,
+                'status': 'open'
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error creating post: {str(e)}")
+        logger.exception("Full traceback:")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # ✅ Run the Flask App
 if __name__ == '__main__':
     app.run(debug=True)
