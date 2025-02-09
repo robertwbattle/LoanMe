@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import { Github, Twitter } from "@/components/shared/icons";
 import Card from "../components/home/card";
+import WebVitals from "../components/home/web-vitals"; // Add this import
+
 
 export default function Home() {
   const [user, setUser] = useState(null);
@@ -75,21 +77,33 @@ export default function Home() {
           )}
         </div>
       </div>
-
       <div className="my-10 grid w-full max-w-screen-xl animate-fade-up grid-cols-1 gap-5 px-5 md:grid-cols-3 xl:px-0">
-        <Card
-          title="Average Loan Size"
-          description="Our platform facilitates an average loan size of \$121, making credit accessible to everyone."
-          large={true}
-        />
-        <Card
-          title="Competitive APY"
-          description="Earn an average of 5.6% APY on your investments while helping others access credit."
-        />
-        <Card
-          title="Secure Platform"
-          description="Built on blockchain technology ensuring transparent and secure transactions."
-        />
+      <Card
+        title="Average Loan Size"
+        description="Our platform facilitates an average loan size of $500+, making credit accessible to everyone."
+        demo={<WebVitals percentage={500} prefix="$" />}
+        large={true}
+      />
+
+      <Card
+        title="Competitive APY"
+        description="Earn an average of 5.6% APY on your investments while helping others access credit."
+        demo={<WebVitals percentage={5.6} suffix="%" />}
+      />
+       <Card
+        title="Secure Platform"
+        description="Built on solana's blockchain technology ensuring transparent and secure transactions."
+        demo={
+          <div className="flex justify-center items-center">
+            <Image
+              src="/solana-logo.jpg"
+              alt="Solana Logo"
+              width={100}
+              height={100}
+            />
+          </div>
+        }
+      />
       </div>
     </main>
   );
