@@ -24,14 +24,14 @@ export default function Account() {
           placeholder="New Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="border p-2 w-full"
+          className="border text-black p-2 w-full"
         />
         <input
           type="password"
           placeholder="New Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="border p-2 w-full"
+          className="border text-black p-2 w-full"
         />
         <button onClick={handleUpdate} className="bg-blue-500 text-white px-4 py-2 rounded">
           Update Info
