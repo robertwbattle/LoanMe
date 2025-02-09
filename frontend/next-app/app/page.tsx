@@ -31,7 +31,7 @@ export default function Home() {
           className="mx-auto mb-5 flex max-w-fit animate-fade-up items-center justify-center space-x-2 overflow-hidden rounded-full bg-blue-100 px-7 py-2 transition-colors hover:bg-blue-200"
         >
           <Twitter className="h-5 w-5 text-[#1d9bf0]" />
-          <p className="text-sm font-semibold text-[#1d9bf0]">
+          <p className="text-sm font-semibold text-[#1d9bf0]" href="https://www.google.com/">
             Welcome to LoanMe
           </p>
         </a>
@@ -39,7 +39,7 @@ export default function Home() {
           className="animate-fade-up bg-gradient-to-br from-black to-stone-500 bg-clip-text text-center font-display text-4xl font-bold tracking-[-0.02em] text-transparent md:text-7xl md:leading-[5rem]"
           style={{ animationDelay: "0.15s" }}
         >
-          Private credit public impact
+          Private Credit Public impact
         </h1>
         <p
           className="mt-6 animate-fade-up text-center text-gray-500 md:text-xl"
