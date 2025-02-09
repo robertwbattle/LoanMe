@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("2LeZgHYfygZeDwg1GRsyAT2HpyB2KnD6zYJYCL4UFMV3");
+declare_id!("HpEWLU7hUuDasqiVvZaL6bQAnyUTY9SUhHWTL9uz4kc4");
 
 #[account]
 #[derive(Default)]
@@ -42,7 +42,13 @@ pub mod sol_backend {
         duration: u32,
         timestamp: i64,
     ) -> Result<()> {
-        ctx.accounts.validate()?;
+        msg!("=== Debug PDA Seeds ===");
+        msg!("Seed 1 (loan): {:?}", b"loan");
+        msg!("Seed 2 (lender): {:?}", ctx.accounts.lender.key().to_string());
+        msg!("Seed 3 (borrower): {:?}", ctx.accounts.borrower.key().to_string());
+        msg!("Seed 4 (timestamp): {:?}", timestamp);
+        msg!("Seed 4 (timestamp bytes): {:?}", timestamp.to_le_bytes());
+        
         let loan_account = &mut ctx.accounts.loan_account;
         let clock = Clock::get()?;
 

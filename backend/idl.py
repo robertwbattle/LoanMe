@@ -19,6 +19,35 @@ idl = {
                     "name": "system_program",
                     "isMut": False,
                     "isSigner": False
+                },
+                {
+                    "name": "loan_account",
+                    "isMut": True,
+                    "isSigner": False,
+                    "pda": {
+                        "seeds": [
+                            {
+                                "kind": "const",
+                                "type": "bytes",
+                                "value": [108, 111, 97, 110]  // "loan" in bytes
+                            },
+                            {
+                                "kind": "account",
+                                "type": "publicKey",
+                                "path": "lender"
+                            },
+                            {
+                                "kind": "account",
+                                "type": "publicKey",
+                                "path": "borrower"
+                            },
+                            {
+                                "kind": "arg",
+                                "type": "i64",
+                                "path": "timestamp"
+                            }
+                        ]
+                    }
                 }
             ],
             "args": [

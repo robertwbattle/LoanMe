@@ -25,6 +25,8 @@ from dotenv import load_dotenv
 from anchorpy_core.idl import Idl
 from idl import idl
 from base58 import b58decode
+from functools import wraps
+from solders.sysvar import RENT as SYSVAR_RENT_PUBKEY
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -289,25 +291,26 @@ async def create_loan():
         data = request.json
         client, program, _ = await get_solana_client()
         
-        # Convert base58 private key string to Keypair
-        lender_keypair = Keypair.from_base58_string(data['lenderSignature'])
+        logger.info("=== Starting Loan Creation ===")
+        logger.info(f"Request data: {data}")
+        
+        # Create keypair from private key
+        private_key_bytes = bytes(data['lenderPrivateKey'])
+        lender_keypair = Keypair.from_bytes(private_key_bytes)
         logger.info(f"Lender pubkey: {lender_keypair.pubkey()}")
-        
-        # Create provider with lender's wallet
-        provider = Provider(
-            client,
-            Wallet(lender_keypair),
-            opts=None
-        )
-        
-        # Create program instance with lender's provider
-        program = Program(program.idl, program.program_id, provider)
         
         borrower = Pubkey.from_string(data['borrowerPublicKey'])
         loan_amount = int(data['loanAmount'])
         apy = int(data['apy'])
         duration = int(data['duration'])
         timestamp = int(time.time() * 1000)
+        
+        logger.info(f"Loan details:")
+        logger.info(f"- Amount: {loan_amount}")
+        logger.info(f"- APY: {apy}")
+        logger.info(f"- Duration: {duration}")
+        logger.info(f"- Timestamp: {timestamp}")
+        logger.info(f"- Borrower: {borrower}")
         
         [loan_pda, bump] = Pubkey.find_program_address(
             [
@@ -319,12 +322,14 @@ async def create_loan():
             program.program_id
         )
         
-        logger.info(f"Creating loan with PDA: {loan_pda}")
+        logger.info(f"Generated PDA: {loan_pda} with bump: {bump}")
         
         # Get recent blockhash
         recent_blockhash = await client.get_latest_blockhash()
+        logger.info(f"Recent blockhash: {recent_blockhash.value.blockhash}")
         
-        # Build instruction
+        # Create instruction
+        logger.info("Creating program instruction...")
         ix = program.instruction["create_loan"](
             loan_amount,
             apy,
@@ -332,37 +337,96 @@ async def create_loan():
             timestamp,
             ctx=Context(
                 accounts={
-                    'loanAccount': loan_pda,
+                    'loan_account': loan_pda,
                     'lender': lender_keypair.pubkey(),
                     'borrower': borrower,
                     'system_program': SYS_PROGRAM_ID,
-                }
+                },
+                signers=[lender_keypair]
             )
         )
+
+        # Add more detailed logging
+        logger.info(f"Program ID: {program.program_id}")
+        logger.info(f"Instruction data: {ix.data.hex()}")
+        logger.info("Account Metas:")
+        for acc in ix.accounts:
+            logger.info(f"  - {acc.pubkey} (signer: {acc.is_signer}, writable: {acc.is_writable})")
         
-        # Create and sign transaction
+        # Create transaction
+        logger.info("Creating transaction...")
         tx = Transaction()
         tx.recent_blockhash = recent_blockhash.value.blockhash
-        tx.add(ix)
-        tx.sign(lender_keypair)
+        tx.fee_payer = lender_keypair.pubkey()
         
-        # Send signed transaction (removed the list brackets)
-        tx_sig = await client.send_transaction(
-            tx,
-            lender_keypair,  # Changed from [lender_keypair] to lender_keypair
+        # Add create account instruction first
+        space = 8 + 32 + 32 + 8 + 2 + 8 + 8 + 4 + 1 + 1  # Size of LoanAccount struct
+        rent = await client.get_minimum_balance_for_rent_exemption(space)
+        logger.info(f"Required rent (lamports): {rent.value}")
+        
+        # Create system program instruction to create account
+        logger.info("Creating system program instruction...")
+        create_account_ix = create_account(
+            {
+                "from_pubkey": lender_keypair.pubkey(),
+                "to_pubkey": loan_pda,
+                "space": space,
+                "lamports": rent.value,
+                "owner": program.program_id,
+            }
+        )
+        logger.info(f"System instruction created: {create_account_ix}")
+        
+        logger.info("Adding instructions to transaction...")
+        tx.add(create_account_ix)
+        tx.add(ix)
+        
+        # Sign transaction
+        logger.info("Signing transaction...")
+        tx.sign(lender_keypair)
+        logger.info(f"Transaction signatures: {tx.signatures}")
+        
+        # Send raw transaction
+        logger.info("Sending transaction...")
+        serialized_tx = tx.serialize()
+        logger.info(f"Serialized transaction size: {len(serialized_tx)} bytes")
+        
+        tx_sig = await client.send_raw_transaction(
+            serialized_tx,
             opts=TxOpts(skip_preflight=True)
         )
+        logger.info(f"Transaction sent with signature: {tx_sig}")
         
-        logger.info(f"Transaction sent: {tx_sig}")
+        # Wait for confirmation
+        logger.info("Waiting for confirmation...")
+        await client.confirm_transaction(tx_sig.value)
+        logger.info("Transaction confirmed!")
+        
+        # Fetch transaction details
+        logger.info("Fetching transaction details...")
+        tx_details = await client.get_transaction(tx_sig.value)
+        if tx_details and tx_details.value:
+            logger.info("Transaction Details:")
+            if hasattr(tx_details.value, 'meta') and tx_details.value.meta:
+                logger.info(f"Status: {tx_details.value.meta.err if tx_details.value.meta.err else 'Success'}")
+                if tx_details.value.meta.log_messages:
+                    logger.info("Program Logs:")
+                    for log in tx_details.value.meta.log_messages:
+                        logger.info(f"  {log}")
+            else:
+                logger.info("No detailed metadata available")
         
         return jsonify({
             'success': True,
-            'transaction': str(tx_sig),
-            'loanPDA': str(loan_pda)
+            'transaction': str(tx_sig.value),
+            'loanPDA': str(loan_pda),
+            'lenderPubkey': str(lender_keypair.pubkey()),
+            'logs': tx_details.value.meta.log_messages if tx_details and tx_details.value and hasattr(tx_details.value, 'meta') and tx_details.value.meta else []
         })
         
     except Exception as e:
         logger.error(f"Error in create_loan: {str(e)}")
+        logger.exception("Full traceback:")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # Make payment endpoint
