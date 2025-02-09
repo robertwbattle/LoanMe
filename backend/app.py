@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from db import get_post, get_user, get_payment_schedule, get_transaction, get_payment
-from db import create_post, create_user, create_transaction, create_payment, update_user_solana_address, update_user_solana_private_key
+from db import create_post, create_user, create_transaction, create_payment, update_user_solana_address, update_user_solana_private_key, add_payment_schedule
 import sqlite3
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -19,6 +19,7 @@ import os
 import logging
 from solana.rpc.types import TxOpts
 import requests
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -68,46 +69,46 @@ async def get_solana_client():
         logger.error(f"Error in get_solana_client: {str(e)}")
         raise
 
-# ✅ Existing API - Get a Single Loan Post
-@app.route('/api/posts/<int:post_id>', methods=['GET'])
-def get_post(post_id):
+# ✅ Existing API - Get a Single Loan
+@app.route('/api/loans/<int:loan_id>', methods=['GET'])
+def get_loan(loan_id):
     conn = sqlite3.connect('loan_platform.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM Posts WHERE post_id = ?", (post_id,))
-    post = cursor.fetchone()
+    cursor.execute("SELECT * FROM Loans WHERE loan_id = ?", (loan_id,))
+    loan = cursor.fetchone()
     conn.close()
 
-    if post:
+    if loan:
         return jsonify({
-            "post_id": post[0],
-            "account_name": post[1],
-            "loan_amount": post[2],
-            "interest_rate": post[3],
-            "payment_schedule": post[4],
-            "description": "Detailed information about this loan post."
+            "loan_id": loan[0],
+            "account_name": loan[1],
+            "loan_amount": loan[2],
+            "interest_rate": loan[3],
+            "payment_schedule": loan[4],
+            "description": "Detailed information about this loan."
         })
-    return jsonify({"error": "Post not found"}), 404
+    return jsonify({"error": "Loan not found"}), 404
 
 
-# ✅ New API - Get All Loan Posts
-@app.route('/api/posts', methods=['GET'])
-def get_posts():
+# ✅ New API - Get All Loans
+@app.route('/api/loans', methods=['GET'])
+def get_loans():
     conn = sqlite3.connect('loan_platform.db')
     cursor = conn.cursor()
 
     # Simplified Query (No Joins)
-    cursor.execute("SELECT post_id, loan_amount, interest_rate, status FROM Posts WHERE status = 'open'")
-    posts = cursor.fetchall()
+    cursor.execute("SELECT loan_id, loan_amount, interest_rate, status FROM Loans WHERE status = 'open'")
+    loans = cursor.fetchall()
     conn.close()
 
     return jsonify([
         {
-            "id": post[0],
-            "loan_amount": post[1],
-            "interest_rate": post[2],
-            "status": post[3]
+            "id": loan[0],
+            "loan_amount": loan[1],
+            "interest_rate": loan[2],
+            "status": loan[3]
         }
-        for post in posts
+        for loan in loans
     ])
 
 
@@ -116,22 +117,22 @@ def get_activity():
     conn = sqlite3.connect('loan_platform.db')
     cursor = conn.cursor()
 
-    # Example: Fetch user's posts as activity
+    # Example: Fetch user's loans as activity
     cursor.execute("""
-        SELECT p.post_type, p.loan_amount, p.status
-        FROM Posts p
-        JOIN Users u ON p.user_id = u.user_id
-        ORDER BY p.created_at DESC
+        SELECT l.loan_type, l.loan_amount, l.status
+        FROM Loans l
+        JOIN Users u ON l.user_id = u.user_id
+        ORDER BY l.created_at DESC
     """)
     activities = cursor.fetchall()
     conn.close()
 
     return jsonify([
         {
-            "type": post[0],                # borrow/lend
-            "details": f"Loan of ${post[1]} ({post[2]}) by {post[3]}"
+            "type": loan[0],                # borrow/lend
+            "details": f"Loan of ${loan[1]} ({loan[2]}) by {loan[3]}"
         }
-        for post in activities
+        for loan in activities
     ])
 
 
@@ -320,7 +321,7 @@ async def make_payment(loan_pda):
 
 # Get loan details endpoint
 @app.route('/api/loans/<loan_pda>', methods=['GET'])
-async def get_loan(loan_pda):
+async def get_loan_details(loan_pda):
     try:
         client, program, _ = await get_solana_client()
         
@@ -651,6 +652,48 @@ async def get_program_info(program_id):
             'error': str(e)
         }), 500
 
+@app.route('/api/user/<int:user_id>/loans', methods=['GET'])
+def get_user_loans(user_id):
+    conn = sqlite3.connect('loan_platform.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT l.loan_amount, l.interest_rate, l.payment_schedule, p.amount_due, p.amount_paid, p.payment_status
+        FROM Loans l
+        JOIN Payments p ON l.loan_id = p.loan_id
+        WHERE l.user_id = ?
+    ''', (user_id,))
+    loans = cursor.fetchall()
+    conn.close()
+
+    return jsonify([
+        {
+            'id': loan[0],
+            'loan_amount': loan[1],
+            'interest_rate': loan[2],
+            'payment_schedule': loan[3],
+            'amount_due': loan[4],
+            'amount_paid': loan[5],
+            'payment_status': loan[6],
+        }
+        for loan in loans
+    ])
+
+@app.route('/api/loans/<int:loan_id>/pay', methods=['POST'])
+def pay_loan(loan_id):
+    data = request.json
+    amount = data.get('amount')
+
+    conn = sqlite3.connect('loan_platform.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE Payments
+        SET amount_paid = amount_paid + ?, payment_status = 'paid'
+        WHERE loan_id = ? AND payment_status = 'due'
+    ''', (amount, loan_id))
+    conn.commit()
+    conn.close()
+
+    return jsonify({'success': True, 'message': 'Payment successful'})
 
 # ✅ Run the Flask App
 if __name__ == '__main__':
