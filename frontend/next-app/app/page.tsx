@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { Github, Twitter } from "@/components/shared/icons";
-import Card from "@/components/home/card";
+import Card from "../components/home/card";
 
 export default function Home() {
   const [user, setUser] = useState(null);
