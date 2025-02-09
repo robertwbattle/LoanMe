@@ -50,11 +50,13 @@ app.post('/loans', async (req, res) => {
     console.log("📈 APY:", apy);
     console.log("⏱️ Duration:", duration);
     
+    const timestamp = Date.now();
     const [loanPDA] = PublicKey.findProgramAddressSync(
       [
         Buffer.from("loan"),
         wallet.publicKey.toBuffer(),
         borrower.toBuffer(),
+        new anchor.BN(timestamp).toBuffer('le', 8)
       ],
       program.programId
     );
@@ -65,7 +67,8 @@ app.post('/loans', async (req, res) => {
       .createLoan(
         new anchor.BN(loanAmount),
         apy,
-        duration
+        duration,
+        new anchor.BN(timestamp)
       )
       .accounts({
         lender: wallet.publicKey,

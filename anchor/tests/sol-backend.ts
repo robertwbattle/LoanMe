@@ -39,9 +39,10 @@ describe("sol-backend", () => {
     const loanAmount = new anchor.BN(100000000);
     const apy = new anchor.BN(1000).toNumber();
     const duration = new anchor.BN(365 * 24 * 60 * 60).toNumber();
+    const timestamp = new anchor.BN(Date.now());
 
     await program.methods
-      .createLoan(loanAmount, apy, duration)
+      .createLoan(loanAmount, apy, duration, timestamp)
       .accounts({
         lender: lender.publicKey,
         borrower: borrower.publicKey,
@@ -82,7 +83,7 @@ describe("sol-backend", () => {
 
     console.log("Creating loan...");
     await program.methods
-      .createLoan(loanAmount, apy, duration)
+      .createLoan(loanAmount, apy, duration, new anchor.BN(Date.now()))
       .accounts({
         lender: lender.publicKey,
         borrower: borrower.publicKey,

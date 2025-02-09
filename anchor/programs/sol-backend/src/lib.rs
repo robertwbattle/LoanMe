@@ -38,6 +38,7 @@ pub mod sol_backend {
         loan_amount: u64,
         apy: u16,
         duration: u32,
+        timestamp: i64,
     ) -> Result<()> {
         ctx.accounts.validate()?;
         let loan_account = &mut ctx.accounts.loanAccount;
@@ -90,12 +91,18 @@ pub mod sol_backend {
 pub struct Initialize {}
 
 #[derive(Accounts)]
+#[instruction(timestamp: i64)]
 pub struct CreateLoan<'info> {
     #[account(
         init,
         payer = lender,
         space = LoanAccount::SPACE,
-        seeds = [b"loan", lender.key().as_ref(), borrower.key().as_ref()],
+        seeds = [
+            b"loan",
+            lender.key().as_ref(),
+            borrower.key().as_ref(),
+            timestamp.to_le_bytes().as_ref()
+        ],
         bump
     )]
     pub loanAccount: Account<'info, LoanAccount>,
