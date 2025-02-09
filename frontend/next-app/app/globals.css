@@ -20,6 +20,14 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+h1{
+  color: #0a0a0a;
+}
+
+p{
+  color: #0a0a0a;
+}
+
 
 
 /* app/globals.css */
