@@ -33,7 +33,7 @@ export default function LoanDetailPage() {
       <p className="mt-4 text-primary">{loan.description}</p>
   
       <button className="mt-6 bg-accent text-white px-4 py-2 rounded hover:bg-primary transition">
-        Apply for this Loan
+        Accept Loan Terms
       </button>
     </div>
   );
