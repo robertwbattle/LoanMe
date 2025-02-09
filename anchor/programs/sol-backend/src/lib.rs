@@ -42,13 +42,6 @@ pub mod sol_backend {
         duration: u32,
         timestamp: i64,
     ) -> Result<()> {
-        msg!("=== Debug PDA Seeds ===");
-        msg!("Seed 1 (loan): {:?}", b"loan");
-        msg!("Seed 2 (lender): {:?}", ctx.accounts.lender.key().to_string());
-        msg!("Seed 3 (borrower): {:?}", ctx.accounts.borrower.key().to_string());
-        msg!("Seed 4 (timestamp): {:?}", timestamp);
-        msg!("Seed 4 (timestamp bytes): {:?}", timestamp.to_le_bytes());
-        
         let loan_account = &mut ctx.accounts.loan_account;
         let clock = Clock::get()?;
 
@@ -133,10 +126,12 @@ pub struct CreateLoan<'info> {
         bump
     )]
     pub loan_account: Account<'info, LoanAccount>,
+    
     #[account(mut)]
     pub lender: Signer<'info>,
-    /// CHECK: This is safe because we only store the pubkey
-    pub borrower: UncheckedAccount<'info>,
+    
+    pub borrower: Signer<'info>,
+    
     pub system_program: Program<'info, System>,
 }
 
