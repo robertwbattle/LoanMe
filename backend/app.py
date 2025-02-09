@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from db import get_post, get_user, get_payment_schedule, get_transaction, get_payment
-from db import create_post, create_user, create_transaction, create_payment
+from db import create_post, create_user, create_transaction, create_payment, update_user_solana_address, update_user_solana_private_key, add_payment_schedule
 import sqlite3
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -9,7 +9,7 @@ from solana.rpc.async_api import AsyncClient
 from anchorpy import Provider, Wallet, Context, Program
 from solana.rpc.commitment import Confirmed
 from solders.instruction import Instruction, AccountMeta
-from solders.system_program import ID as SYS_PROGRAM_ID, TransferParams, transfer
+from solders.system_program import ID as SYS_PROGRAM_ID, TransferParams, transfer, create_account
 from solders.message import Message
 from solana.transaction import Transaction
 import asyncio
@@ -18,7 +18,8 @@ import json
 import os
 import logging
 from solana.rpc.types import TxOpts
-from functools import wraps
+import requests
+import time
 import time
 from dotenv import load_dotenv
 from anchorpy_core.idl import Idl
@@ -100,46 +101,46 @@ async def get_solana_client():
     
     return client, program, wallet
 
-# ✅ Existing API - Get a Single Loan Post
-@app.route('/api/posts/<int:post_id>', methods=['GET'])
-def get_post(post_id):
+# ✅ Existing API - Get a Single Loan
+@app.route('/api/loans/<int:loan_id>', methods=['GET'])
+def get_loan(loan_id):
     conn = sqlite3.connect('loan_platform.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM Posts WHERE post_id = ?", (post_id,))
-    post = cursor.fetchone()
+    cursor.execute("SELECT * FROM Loans WHERE loan_id = ?", (loan_id,))
+    loan = cursor.fetchone()
     conn.close()
 
-    if post:
+    if loan:
         return jsonify({
-            "post_id": post[0],
-            "account_name": post[1],
-            "loan_amount": post[2],
-            "interest_rate": post[3],
-            "payment_schedule": post[4],
-            "description": "Detailed information about this loan post."
+            "loan_id": loan[0],
+            "account_name": loan[1],
+            "loan_amount": loan[2],
+            "interest_rate": loan[3],
+            "payment_schedule": loan[4],
+            "description": "Detailed information about this loan."
         })
-    return jsonify({"error": "Post not found"}), 404
+    return jsonify({"error": "Loan not found"}), 404
 
 
-# ✅ New API - Get All Loan Posts
-@app.route('/api/posts', methods=['GET'])
-def get_posts():
+# ✅ New API - Get All Loans
+@app.route('/api/loans', methods=['GET'])
+def get_loans():
     conn = sqlite3.connect('loan_platform.db')
     cursor = conn.cursor()
 
     # Simplified Query (No Joins)
-    cursor.execute("SELECT post_id, loan_amount, interest_rate, status FROM Posts WHERE status = 'open'")
-    posts = cursor.fetchall()
+    cursor.execute("SELECT loan_id, loan_amount, interest_rate, status FROM Loans WHERE status = 'open'")
+    loans = cursor.fetchall()
     conn.close()
 
     return jsonify([
         {
-            "id": post[0],
-            "loan_amount": post[1],
-            "interest_rate": post[2],
-            "status": post[3]
+            "id": loan[0],
+            "loan_amount": loan[1],
+            "interest_rate": loan[2],
+            "status": loan[3]
         }
-        for post in posts
+        for loan in loans
     ])
 
 
@@ -148,22 +149,22 @@ def get_activity():
     conn = sqlite3.connect('loan_platform.db')
     cursor = conn.cursor()
 
-    # Example: Fetch user's posts as activity
+    # Example: Fetch user's loans as activity
     cursor.execute("""
-        SELECT p.post_type, p.loan_amount, p.status
-        FROM Posts p
-        JOIN Users u ON p.user_id = u.user_id
-        ORDER BY p.created_at DESC
+        SELECT l.loan_type, l.loan_amount, l.status
+        FROM Loans l
+        JOIN Users u ON l.user_id = u.user_id
+        ORDER BY l.created_at DESC
     """)
     activities = cursor.fetchall()
     conn.close()
 
     return jsonify([
         {
-            "type": post[0],                # borrow/lend
-            "details": f"Loan of ${post[1]} ({post[2]}) by {post[3]}"
+            "type": loan[0],                # borrow/lend
+            "details": f"Loan of ${loan[1]} ({loan[2]}) by {loan[3]}"
         }
-        for post in activities
+        for loan in activities
     ])
 
 
@@ -197,6 +198,8 @@ def generate_wallet(user_id):
         
         if response.status_code == 200:
             wallet_data = response.json()
+
+            print(wallet_data)
             
             # Update user record with wallet information
             conn = sqlite3.connect('loan_platform.db')
@@ -240,14 +243,36 @@ def create_account():
     if request.method == 'OPTIONS':
         return _build_cors_preflight_response()
     elif request.method == 'POST':
-        data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
-        # solana_address = data.get('solana_address')
-        # solana_private_key = data.get('solana_private_key')
-        # Add logic to create account
-        create_user(password, email, None, None)
-        return jsonify({"success": True, "message": "Account created successfully"})
+        try:
+            data = request.get_json()
+            email = data.get('email')
+            password = data.get('password')
+            create_user(password, email, None, None)
+            
+            # Generate wallet for the new user
+            user_id = get_user_id_by_email(email)
+            wallet_response = generate_wallet(user_id)
+            wallet_result = wallet_response.get_json()
+            if wallet_result['success']:
+                update_user_solana_address(user_id, wallet_result['wallet']['address'])
+                update_user_solana_private_key(user_id, wallet_result['wallet']['private_key'])
+            
+            return jsonify({"success": True, "message": "Account created successfully"})
+        except Exception as e:
+            logger.error(f"Error creating account: {str(e)}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+def get_user_id_by_email(email):
+    try:
+        conn = sqlite3.connect('loan_platform.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM Users WHERE email = ?", (email,))
+        user_id = cursor.fetchone()[0]
+        conn.close()
+        return user_id
+    except Exception as e:
+        logger.error(f"Error getting user ID by email: {str(e)}")
+        raise
 
 def _build_cors_preflight_response():
     response = jsonify({'message': 'CORS preflight'})
@@ -445,7 +470,7 @@ async def make_payment(loan_pda):
 
 # Get loan details endpoint
 @app.route('/api/loans/<loan_pda>', methods=['GET'])
-async def get_loan(loan_pda):
+async def get_loan_details(loan_pda):
     try:
         client, program, wallet = await get_solana_client()
         
@@ -475,16 +500,28 @@ async def get_loan(loan_pda):
 @async_route
 async def deploy_contract():
     try:
-        logger.info("Starting deployment...")
+        logger.info("=== Starting deployment process ===")
         
         # Get client and wallet
         client, _, wallet = await get_solana_client()
         
-        # Check program file exists and read it
+        # Check program file and read it
         program_path = '../anchor/target/deploy/sol_backend.so'
+        if not os.path.exists(program_path):
+            logger.error(f"Program file not found at {program_path}")
+            return jsonify({
+                'success': False,
+                'error': f"Program file not found at {program_path}"
+            }), 404
+            
+        client, _, wallet = await get_solana_client()
+        logger.info(f"Got client and wallet. Wallet pubkey: {wallet.public_key}")
+        
+        # Read program
         with open(program_path, 'rb') as f:
             program_data = f.read()
         logger.info(f"Program data size: {len(program_data)} bytes")
+        logger.info(f"Read program binary, size: {len(program_data)} bytes")
         
         # Create program keypair
         program_keypair = Keypair()
@@ -595,8 +632,17 @@ async def deploy_contract():
         })
         
     except Exception as e:
-        logger.error(f"Error in deploy_contract: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.error(f"=== UNHANDLED ERROR IN DEPLOYMENT ===")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error message: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': str(type(e)),
+            'traceback': traceback.format_exc()
+        }), 500
 
 # Get deployment status
 @app.route('/api/deploy/<signature>', methods=['GET'])
@@ -623,6 +669,8 @@ async def get_wallet_balance():
     try:
         client, program_id, wallet = await get_solana_client()
         balance_response = await client.get_balance(wallet.public_key)
+
+        
         
         return jsonify({
             'success': True,
@@ -694,14 +742,12 @@ async def transfer_sol():
         tx.recent_blockhash = recent_blockhash.value.blockhash
         tx.fee_payer = wallet.public_key
         
+        # Sign transaction
+        tx.sign(wallet.payer)
+        
         # Send transaction with signer
         logger.info("Sending transaction with signer...")
-        opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-        signature = await client.send_transaction(
-            tx, 
-            wallet.payer,
-            opts=opts
-        )
+        signature = await client.send_raw_transaction(tx.serialize())
         logger.info(f"Transfer complete. Signature: {signature}")
         
         return jsonify({
@@ -738,14 +784,13 @@ def login():
     else:
         return jsonify({"success": False, "message": "Invalid email or password"}), 401
 
-
 @app.route('/api/program/<program_id>', methods=['GET'])
 @async_route
 async def get_program_info(program_id):
     try:
-        client, program_id, _ = await get_solana_client()
-        program_info = await client.get_account_info(Pubkey.from_string(program_id))
-        
+        client  = await get_solana_client()
+        program_info = await client[0].get_account_info(Pubkey.from_string(program_id))
+
         return jsonify({
             'success': True,
             'exists': program_info.value is not None,
@@ -759,6 +804,49 @@ async def get_program_info(program_id):
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/api/user/<int:user_id>/loans', methods=['GET'])
+def get_user_loans(user_id):
+    conn = sqlite3.connect('loan_platform.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT l.loan_amount, l.interest_rate, l.payment_schedule, p.amount_due, p.amount_paid, p.payment_status
+        FROM Loans l
+        JOIN Payments p ON l.loan_id = p.loan_id
+        WHERE l.user_id = ?
+    ''', (user_id,))
+    loans = cursor.fetchall()
+    conn.close()
+
+    return jsonify([
+        {
+            'id': loan[0],
+            'loan_amount': loan[1],
+            'interest_rate': loan[2],
+            'payment_schedule': loan[3],
+            'amount_due': loan[4],
+            'amount_paid': loan[5],
+            'payment_status': loan[6],
+        }
+        for loan in loans
+    ])
+
+@app.route('/api/loans/<int:loan_id>/pay', methods=['POST'])
+def pay_loan(loan_id):
+    data = request.json
+    amount = data.get('amount')
+
+    conn = sqlite3.connect('loan_platform.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE Payments
+        SET amount_paid = amount_paid + ?, payment_status = 'paid'
+        WHERE loan_id = ? AND payment_status = 'due'
+    ''', (amount, loan_id))
+    conn.commit()
+    conn.close()
+
+    return jsonify({'success': True, 'message': 'Payment successful'})
 
 # ✅ Run the Flask App
 if __name__ == '__main__':
