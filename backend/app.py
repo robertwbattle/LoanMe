@@ -117,7 +117,7 @@ def get_activity():
 
     # Example: Fetch user's posts as activity
     cursor.execute("""
-        SELECT p.post_type, p.loan_amount, p.status, u.username
+        SELECT p.post_type, p.loan_amount, p.status
         FROM Posts p
         JOIN Users u ON p.user_id = u.user_id
         ORDER BY p.created_at DESC
@@ -587,6 +587,24 @@ async def transfer_sol():
             'error': str(e),
             'traceback': traceback.format_exc()
         }), 500
+    
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+    
+    conn = sqlite3.connect('loan_platform.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM Users WHERE email = ? AND password_hash = ?", (email, password))
+    user = cursor.fetchone()
+    conn.close()
+
+    if user:
+        return jsonify({"success": True, "user": {"user_id": user[0], "email": user[2], "score": user[3], "solana_address": user[5]}})
+    else:
+        return jsonify({"success": False, "message": "Invalid email or password"}), 401
+
 
 # ✅ Run the Flask App
 if __name__ == '__main__':
