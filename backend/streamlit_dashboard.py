@@ -2,6 +2,11 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import requests
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Function to fetch data from the database
 def fetch_data(query):
@@ -18,7 +23,10 @@ def transfer_sol(destination, amount):
         'amount': amount
     }
     response = requests.post(url, json=payload)
-    return response.json()
+    try:
+        return response.json()
+    except requests.exceptions.JSONDecodeError:
+        return {'success': False, 'error': 'Invalid JSON response'}
 
 # Function to get wallet balance
 def get_wallet_balance():
@@ -38,6 +46,20 @@ def deploy_contract():
     response = requests.post(url)
     return response.json()
 
+# Function to get program info
+def get_program_info(program_id):
+    url = f'http://127.0.0.1:5000/api/program/{program_id}'
+    response = requests.get(url)
+    try:
+        response.raise_for_status()  # Raise an HTTPError for bad responses
+        return response.json()
+    except requests.exceptions.HTTPError as http_err:
+        return {'success': False, 'error': f'HTTP error occurred: {http_err}'}
+    except requests.exceptions.JSONDecodeError:
+        return {'success': False, 'error': 'Invalid JSON response'}
+    except Exception as err:
+        return {'success': False, 'error': f'Other error occurred: {err}'}
+
 # Streamlit app
 st.title("LoanMe Dashboard")
 
@@ -55,8 +77,26 @@ if st.button("Deploy Contract"):
     deploy_result = deploy_contract()
     if deploy_result['success']:
         st.success(f"Contract deployed successfully! Program ID: {deploy_result['programId']}")
+        program_id = deploy_result['programId']
     else:
         st.error(f"Contract deployment failed: {deploy_result['error']}")
+
+# Program ID
+st.header("Program ID")
+program_id = os.getenv("PROGRAM_ID")
+if program_id:
+    program_info = get_program_info(program_id)
+    if program_info['success']:
+        st.write(f"Program ID: {program_id}")
+        st.write(f"Exists: {program_info['exists']}")
+        st.write(f"Executable: {program_info['executable']}")
+        st.write(f"Lamports: {program_info['lamports']}")
+        st.write(f"Owner: {program_info['owner']}")
+        st.write(f"Data Length: {program_info['data_len']}")
+    else:
+        st.error(f"Failed to fetch program info: {program_info['error']}")
+else:
+    st.error("Program ID not found in environment variables")
 
 # Users Data
 st.header("Users Data")

@@ -103,6 +103,42 @@ def update_user_score(user_id, new_score):
     conn.commit()
     conn.close()
 
+def update_user_solana_address(user_id, solana_address):
+    try:
+        conn = sqlite3.connect('loan_platform.db')
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE Users 
+            SET solana_address = ? 
+            WHERE user_id = ?
+        """, (solana_address, user_id))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error updating Solana address: {e}")
+        return False
+
+def update_user_solana_private_key(user_id, solana_private_key):
+    try:
+        conn = sqlite3.connect('loan_platform.db')
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE Users 
+            SET solana_private_key = ? 
+            WHERE user_id = ?
+        """, (solana_private_key, user_id))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error updating Solana private key: {e}")
+        return False
+
 def add_post(user_id, post_type, loan_amount, interest_rate, payment_schedule_id=None):
     conn = sqlite3.connect('loan_platform.db')
     cursor = conn.cursor()
