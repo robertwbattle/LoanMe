@@ -3,16 +3,19 @@ from flask_cors import CORS
 from db import get_post, get_user, get_payment_schedule, get_transaction, get_payment
 from db import create_post, create_user, create_transaction, create_payment
 import sqlite3
+from solders.keypair import Keypair
+from solders.pubkey import Pubkey
 from solana.rpc.async_api import AsyncClient
-from solana.keypair import Keypair
-from solana.publickey import PublicKey
-from anchorpy import Provider, Program, Wallet
+from anchorpy import Provider, Wallet
+from solana.rpc.commitment import Confirmed
+from solders.instruction import Instruction, AccountMeta
+from solders.system_program import ID as SYS_PROGRAM_ID
+from solders.message import Message
+from solana.transaction import Transaction
+import asyncio
+from base64 import b64encode
 import json
 import os
-from dotenv import load_dotenv
-import time
-
-load_dotenv()
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -44,19 +47,15 @@ def check_existing_wallet(user_id):
 
 # Solana setup
 async def get_solana_client():
-    client = AsyncClient("https://api.devnet.solana.com")
-    provider = Provider(
-        client,
-        Wallet(Keypair.from_secret_key(json.loads(os.getenv("WALLET_PRIVATE_KEY")))),
-    )
-    
-    # Load IDL from anchor/target/idl/sol_backend.json
-    with open('../anchor/target/idl/sol_backend.json', 'r') as f:
-        idl = json.load(f)
-    
-    program_id = PublicKey(os.getenv("PROGRAM_ID"))
-    program = Program(idl, program_id, provider)
-    return client, program
+    try:
+        client = AsyncClient("https://api.devnet.solana.com")
+        keypair = Keypair.from_bytes(bytes(json.loads(os.getenv("WALLET_PRIVATE_KEY"))))
+        wallet = Wallet(keypair)
+        provider = Provider(client, wallet)
+        return client, None, wallet
+    except Exception as e:
+        print(f"Error in get_solana_client: {str(e)}")
+        raise
 
 # ✅ Existing API - Get a Single Loan Post
 @app.route('/api/posts/<int:post_id>', methods=['GET'])
@@ -219,9 +218,9 @@ def _build_cors_preflight_response():
 async def create_loan():
     try:
         data = request.json
-        client, program = await get_solana_client()
+        client, _, _ = await get_solana_client()
         
-        borrower = PublicKey(data['borrowerPublicKey'])
+        borrower = Pubkey(data['borrowerPublicKey'])
         loan_amount = data['loanAmount']
         apy = data['apy']
         duration = data['duration']
@@ -251,7 +250,7 @@ async def create_loan():
 async def make_payment(loan_pda):
     try:
         data = request.json
-        client, program = await get_solana_client()
+        client, program, _ = await get_solana_client()
         
         payment_amount = data['paymentAmount']
         borrower_keypair = Keypair.from_secret_key(
@@ -261,7 +260,7 @@ async def make_payment(loan_pda):
         tx = await program.rpc["make_payment"](
             payment_amount,
             accounts={
-                'loanAccount': PublicKey(loan_pda),
+                'loanAccount': Pubkey(loan_pda),
                 'borrower': borrower_keypair.public_key,
                 'lender': program.provider.wallet.public_key,
             },
@@ -270,7 +269,7 @@ async def make_payment(loan_pda):
 
         # Get updated loan info
         loan_account = await program.account["LoanAccount"].fetch(
-            PublicKey(loan_pda)
+            Pubkey(loan_pda)
         )
 
         return jsonify({
@@ -288,10 +287,10 @@ async def make_payment(loan_pda):
 @app.route('/api/loans/<loan_pda>', methods=['GET'])
 async def get_loan(loan_pda):
     try:
-        client, program = await get_solana_client()
+        client, program, _ = await get_solana_client()
         
         loan_account = await program.account["LoanAccount"].fetch(
-            PublicKey(loan_pda)
+            Pubkey(loan_pda)
         )
 
         return jsonify({
@@ -309,6 +308,98 @@ async def get_loan(loan_pda):
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# Add this to handle async routes in Flask
+def async_route(route_function):
+    def wrapper(*args, **kwargs):
+        return asyncio.run(route_function(*args, **kwargs))
+    wrapper.__name__ = route_function.__name__
+    return wrapper
+
+# Modify the deploy endpoint with the decorator
+@app.route('/api/deploy', methods=['POST'])
+@async_route
+async def deploy_contract():
+    try:
+        print("=== Starting deployment process ===")
+        client, _, wallet = await get_solana_client()
+        
+        # Read the compiled program binary
+        program_path = '../anchor/target/deploy/sol_backend.so'
+        with open(program_path, 'rb') as f:
+            program_data = f.read()
+        
+        print(f"Read program binary, size: {len(program_data)} bytes")
+        
+        # Create program address
+        program_keypair = Keypair()
+        print(f"Program ID: {program_keypair.pubkey()}")
+        
+        # Calculate required space and rent
+        program_len = len(program_data)
+        rent = await client.get_minimum_balance_for_rent_exemption(program_len)
+        
+        # Create deployment instruction
+        deploy_ix = Instruction(
+            program_id=SYS_PROGRAM_ID,
+            accounts=[
+                AccountMeta(pubkey=wallet.public_key, is_signer=True, is_writable=True),
+                AccountMeta(pubkey=program_keypair.pubkey(), is_signer=True, is_writable=True),
+            ],
+            data=program_data
+        )
+        
+        # Create transaction
+        recent_blockhash = await client.get_latest_blockhash()
+        tx = Transaction()
+        tx.add(deploy_ix)
+        tx.recent_blockhash = recent_blockhash.value.blockhash
+        
+        # Sign transaction
+        tx.sign(wallet.payer, program_keypair)
+        
+        print("Sending deployment transaction...")
+        response = await client.send_transaction(tx)
+        print(f"Response: {response}")
+        
+        return jsonify({
+            'success': True,
+            'programId': str(program_keypair.pubkey()),
+            'signature': str(response['result']),
+            'message': 'Contract deployment initiated'
+        })
+        
+    except Exception as e:
+        print(f"=== ERROR IN DEPLOYMENT ===")
+        print(f"Error type: {type(e)}")
+        print(f"Error message: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': str(type(e)),
+            'traceback': traceback.format_exc()
+        }), 500
+
+# Get deployment status
+@app.route('/api/deploy/<signature>', methods=['GET'])
+async def get_deploy_status(signature):
+    try:
+        client, _, _ = await get_solana_client()
+        status = await client.get_transaction(signature)
+        
+        return jsonify({
+            'success': True,
+            'status': status['result']['meta']['status'],
+            'confirmations': status['result']['confirmations']
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 # ✅ Run the Flask App
 if __name__ == '__main__':
