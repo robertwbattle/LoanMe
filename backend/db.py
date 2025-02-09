@@ -20,8 +20,8 @@ def setup_database():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         solana_address TEXT UNIQUE,
         solana_private_key TEXT,
-        borrow_count INTEGER DEFAULT 0,
-        successful_payments INTEGER DEFAULT 0
+        wallet_amt INTEGER DEFAULT 0,
+        borrow_count INTEGER DEFAULT 0
     );
 
     -- Posts Table

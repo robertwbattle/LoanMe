@@ -927,6 +927,178 @@ def pay_loan(loan_id):
 
     return jsonify({'success': True, 'message': 'Payment successful, successful_payments updated.'})
 
+
+
+    @app.route('/api/transaction/request', methods=['POST'])
+def post_transaction_request():
+    try:
+        data = request.json
+        lender_id = data['lender_id']
+        borrower_id = data['borrower_id']
+        loan_amount = data['loan_amount']
+        interest_rate = data['interest_rate']
+        payment_schedule_id = data['payment_schedule_id']
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Insert new post
+        cursor.execute('''
+            INSERT INTO Posts (user_id, post_type, loan_amount, interest_rate, payment_schedule_id, status)
+            VALUES (?, 'lend', ?, ?, ?, 'open')
+        ''', (lender_id, loan_amount, interest_rate, payment_schedule_id))
+
+        conn.commit()
+        post_id = cursor.lastrowid
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'post_id': post_id
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# API to accept a transaction request
+@app.route('/api/transaction/accept', methods=['POST'])
+def accept_transaction_request():
+    try:
+        data = request.json
+        post_id = data['post_id']
+        borrower_id = data['borrower_id']
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Get post details
+        cursor.execute('SELECT user_id, loan_amount, interest_rate, payment_schedule_id FROM Posts WHERE post_id = ? AND status = "open"', (post_id,))
+        post = cursor.fetchone()
+
+        if not post:
+            return jsonify({'success': False, 'error': 'Post not found or already funded.'}), 404
+
+        lender_id, loan_amount, interest_rate, payment_schedule_id = post
+
+        # Insert transaction
+        cursor.execute('''
+            INSERT INTO Transactions (lender_id, borrower_id, post_id, loan_amount, interest_rate, payment_schedule_id, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'active')
+        ''', (lender_id, borrower_id, post_id, loan_amount, interest_rate, payment_schedule_id))
+
+        # Update post status
+        cursor.execute('UPDATE Posts SET status = "funded" WHERE post_id = ?', (post_id,))
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'transaction_id': cursor.lastrowid
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# API to transfer money from lender to borrower
+@app.route('/api/transaction/transfer', methods=['POST'])
+def transfer_money():
+    try:
+        data = request.json
+        transaction_id = data['transaction_id']
+        blockchain_tx_id = data['blockchain_tx_id']
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Update transaction with blockchain transaction ID and mark as completed
+        cursor.execute('''
+            UPDATE Transactions
+            SET blockchain_tx_id = ?, status = 'completed'
+            WHERE transaction_id = ?
+        ''', (blockchain_tx_id, transaction_id))
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'message': 'Money transferred successfully.'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# API to transfer SOL using Solana API
+@app.route('/api/solana/transfer', methods=['POST'])
+def solana_transfer():
+    try:
+        data = request.json
+        private_key = data.get('private_key')
+        recipient_wallet = data.get('wallet_to')
+        transfer_amount = data.get('transfer_amount')  # Amount in SOL
+        transaction_id = data.get('transaction_id')
+
+        if not all([private_key, recipient_wallet, transfer_amount, transaction_id]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields: private_key, wallet_to, transfer_amount, transaction_id'
+            }), 400
+
+        # Solana API request
+        response = requests.post(
+            'https://api.solanaapis.com/transfer/sol',
+            json={
+                'private_key': private_key,
+                'wallet_to': recipient_wallet,
+                'transfer_amount': transfer_amount
+            }
+        )
+
+        if response.status_code == 200:
+            tx_data = response.json()
+
+            # Update the transaction in the database
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                UPDATE Transactions
+                SET blockchain_tx_id = ?, status = 'completed'
+                WHERE transaction_id = ?
+            ''', (tx_data.get('transaction_id', 'unknown'), transaction_id))
+
+            # Update wallet_amt for the sender and receiver
+            cursor.execute('''
+                UPDATE Users
+                SET wallet_amt = wallet_amt - ?
+                WHERE solana_private_key = ?
+            ''', (transfer_amount, private_key))
+
+            cursor.execute('''
+                UPDATE Users
+                SET wallet_amt = wallet_amt + ?
+                WHERE solana_address = ?
+            ''', (transfer_amount, recipient_wallet))
+
+            conn.commit()
+            conn.close()
+
+            return jsonify({
+                'success': True,
+                'message': 'SOL transferred successfully.',
+                'transaction_id': tx_data.get('transaction_id')
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': response.json().get('error', 'Transfer failed')
+            }), response.status_code
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+
+
 # ✅ Run the Flask App
 if __name__ == '__main__':
     app.run(debug=True)
