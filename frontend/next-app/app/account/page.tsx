@@ -17,7 +17,7 @@ export default function Account() {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Account Settings</h1>
+      <h1 className="text-2xl text-black font-bold mb-4">Account Settings</h1>
       <div className="space-y-4">
         <input
           type="email"
