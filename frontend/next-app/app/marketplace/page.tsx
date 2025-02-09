@@ -14,7 +14,7 @@ export default function Marketplace() {
   const [posts, setPosts] = useState<Post[]>([]);
 
   useEffect(() => {
-    fetch('http://localhost:5000/api/posts')  // Update this URL if needed
+    fetch('http://127.0.0.1:5000/api/posts')  // Update this URL if needed
       .then(res => res.json())
       .then(data => setPosts(data));
   }, []);
