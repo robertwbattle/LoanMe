@@ -12,10 +12,10 @@ seeds = false
 custom-heap = false
 
 [programs.localnet]
-sol-backend = "C3xL6yYf9jyCJfthRE2nWYeLS1RLDkaDnUf2zcrGYtMj"
+sol-backend = "2LeZgHYfygZeDwg1GRsyAT2HpyB2KnD6zYJYCL4UFMV3"
 
 [programs.devnet]
-sol-backend = "C3xL6yYf9jyCJfthRE2nWYeLS1RLDkaDnUf2zcrGYtMj"
+sol-backend = "2LeZgHYfygZeDwg1GRsyAT2HpyB2KnD6zYJYCL4UFMV3"
 
 [registry]
 url = "https://api.apr.dev"

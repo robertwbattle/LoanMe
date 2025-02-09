@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("C3xL6yYf9jyCJfthRE2nWYeLS1RLDkaDnUf2zcrGYtMj");
+declare_id!("2LeZgHYfygZeDwg1GRsyAT2HpyB2KnD6zYJYCL4UFMV3");
 
 #[account]
 #[derive(Default)]
@@ -13,15 +13,17 @@ pub struct LoanAccount {
     pub start_time: i64,
     pub duration: u32,
     pub is_active: bool,
+    pub is_funded: bool,
 }
 
 const DISCRIMINATOR_LENGTH: usize = 8;
 const PUBKEY_LENGTH: usize = 32;
+const BOOL_LENGTH: usize = 1;
 
 impl LoanAccount {
     pub const SPACE: usize = DISCRIMINATOR_LENGTH +
-        PUBKEY_LENGTH * 2 +  // lender + borrower
-        8 + 2 + 8 + 8 + 4 + 1;  // amount + apy + paid_amount + start_time + duration + is_active
+        (PUBKEY_LENGTH * 2) +  // lender + borrower
+        8 + 2 + 8 + 8 + 4 + 1 + 1;  // amount + apy + paid_amount + start_time + duration + is_active + is_funded
 }
 
 #[program]
@@ -41,7 +43,7 @@ pub mod sol_backend {
         timestamp: i64,
     ) -> Result<()> {
         ctx.accounts.validate()?;
-        let loan_account = &mut ctx.accounts.loanAccount;
+        let loan_account = &mut ctx.accounts.loan_account;
         let clock = Clock::get()?;
 
         loan_account.lender = ctx.accounts.lender.key();
@@ -52,7 +54,26 @@ pub mod sol_backend {
         loan_account.start_time = clock.unix_timestamp;
         loan_account.duration = duration;
         loan_account.is_active = true;
+        loan_account.is_funded = false;
 
+        Ok(())
+    }
+
+    pub fn fund_loan(ctx: Context<FundLoan>) -> Result<()> {
+        let loan_account = &ctx.accounts.loan_account;
+        require!(loan_account.is_active, LoanError::LoanNotActive);
+        
+        // Transfer the loan amount from lender to borrower
+        let cpi_context = CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            anchor_lang::system_program::Transfer {
+                from: ctx.accounts.lender.to_account_info(),
+                to: ctx.accounts.borrower.to_account_info(),
+            },
+        );
+        
+        anchor_lang::system_program::transfer(cpi_context, loan_account.amount)?;
+        
         Ok(())
     }
 
@@ -105,7 +126,7 @@ pub struct CreateLoan<'info> {
         ],
         bump
     )]
-    pub loanAccount: Account<'info, LoanAccount>,
+    pub loan_account: Account<'info, LoanAccount>,
     #[account(mut)]
     pub lender: Signer<'info>,
     /// CHECK: This is safe because we only store the pubkey
@@ -132,6 +153,26 @@ pub struct MakePayment<'info> {
     pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+pub struct FundLoan<'info> {
+    #[account(
+        mut,
+        constraint = loan_account.lender == lender.key(),
+        constraint = loan_account.borrower == borrower.key(),
+        constraint = loan_account.is_active == true
+    )]
+    pub loan_account: Account<'info, LoanAccount>,
+    
+    #[account(mut)]
+    pub lender: Signer<'info>,
+    
+    #[account(mut)]
+    /// CHECK: This is safe because we verify it matches the loan account
+    pub borrower: UncheckedAccount<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
 #[error_code]
 pub enum LoanError {
     #[msg("Loan is not active")]
@@ -142,4 +183,6 @@ pub enum LoanError {
     CalculationError,
     #[msg("Invalid borrower")]
     InvalidBorrower,
+    #[msg("Loan has already been funded")]
+    LoanAlreadyFunded,
 }

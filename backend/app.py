@@ -6,7 +6,7 @@ import sqlite3
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solana.rpc.async_api import AsyncClient
-from anchorpy import Provider, Wallet
+from anchorpy import Provider, Wallet, Context, Program
 from solana.rpc.commitment import Confirmed
 from solders.instruction import Instruction, AccountMeta
 from solders.system_program import ID as SYS_PROGRAM_ID, TransferParams, transfer
@@ -19,6 +19,11 @@ import os
 import logging
 from solana.rpc.types import TxOpts
 from functools import wraps
+import time
+from dotenv import load_dotenv
+from anchorpy_core.idl import Idl
+from idl import idl
+from base58 import b58decode
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -30,6 +35,14 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 # BPF Loader program ID (this is the standard BPF loader on Solana)
 BPF_LOADER_ID = Pubkey.from_string("BPFLoader2111111111111111111111111111111111")
 CHUNK_SIZE = 800
+
+load_dotenv()  # Load .env file
+
+def async_route(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        return asyncio.run(f(*args, **kwargs))
+    return wrapped
 
 # check if there already exist a wallet for the User
 def check_existing_wallet(user_id):
@@ -58,15 +71,34 @@ def check_existing_wallet(user_id):
 
 # Solana setup
 async def get_solana_client():
-    try:
-        client = AsyncClient("https://api.devnet.solana.com")
-        keypair = Keypair.from_bytes(bytes(json.loads(os.getenv("WALLET_PRIVATE_KEY"))))
-        wallet = Wallet(keypair)
-        provider = Provider(client, wallet)
-        return client, None, wallet
-    except Exception as e:
-        logger.error(f"Error in get_solana_client: {str(e)}")
-        raise
+    client = AsyncClient("https://api.devnet.solana.com")
+    
+    # Load wallet from .env
+    private_key_str = os.getenv('WALLET_PRIVATE_KEY')
+    private_key = json.loads(private_key_str)
+    wallet_keypair = Keypair.from_bytes(bytes(private_key))
+    
+    # Create Wallet wrapper that has the correct public_key property
+    from anchorpy.provider import Wallet, Provider
+    wallet = Wallet(wallet_keypair)
+    
+    # Load program ID from .env
+    program_id = Pubkey.from_string(os.getenv('PROGRAM_ID'))
+    
+    # Create provider
+    provider = Provider(client, wallet)
+    
+    # Update IDL with correct program ID
+    idl_copy = idl.copy()
+    idl_copy['metadata'] = {'address': str(program_id)}
+    
+    # Convert dictionary to proper Idl object
+    idl_obj = Idl.from_json(json.dumps(idl_copy))
+    
+    # Create program with proper Idl object
+    program = Program(idl_obj, program_id, provider)
+    
+    return client, program, wallet
 
 # ✅ Existing API - Get a Single Loan Post
 @app.route('/api/posts/<int:post_id>', methods=['GET'])
@@ -226,82 +258,199 @@ def _build_cors_preflight_response():
 
 # Create loan endpoint
 @app.route('/api/loans', methods=['POST'])
+@async_route
 async def create_loan():
     try:
         data = request.json
-        client, _, _ = await get_solana_client()
+        client, program, _ = await get_solana_client()
         
-        borrower = Pubkey(data['borrowerPublicKey'])
-        loan_amount = data['loanAmount']
-        apy = data['apy']
-        duration = data['duration']
+        # Convert base58 private key string to Keypair
+        lender_keypair = Keypair.from_base58_string(data['lenderSignature'])
+        logger.info(f"Lender pubkey: {lender_keypair.pubkey()}")
+        
+        # Create provider with lender's wallet
+        provider = Provider(
+            client,
+            Wallet(lender_keypair),
+            opts=None
+        )
+        
+        # Create program instance with lender's provider
+        program = Program(program.idl, program.program_id, provider)
+        
+        borrower = Pubkey.from_string(data['borrowerPublicKey'])
+        loan_amount = int(data['loanAmount'])
+        apy = int(data['apy'])
+        duration = int(data['duration'])
         timestamp = int(time.time() * 1000)
-
-        tx = await program.rpc["create_loan"](
+        
+        [loan_pda, bump] = Pubkey.find_program_address(
+            [
+                bytes("loan", 'utf-8'),
+                bytes(lender_keypair.pubkey()),
+                bytes(borrower),
+                timestamp.to_bytes(8, 'little')
+            ],
+            program.program_id
+        )
+        
+        logger.info(f"Creating loan with PDA: {loan_pda}")
+        
+        # Get recent blockhash
+        recent_blockhash = await client.get_latest_blockhash()
+        
+        # Build instruction
+        ix = program.instruction["create_loan"](
             loan_amount,
             apy,
             duration,
             timestamp,
-            accounts={
-                'lender': program.provider.wallet.public_key,
-                'borrower': borrower,
-            }
+            ctx=Context(
+                accounts={
+                    'loanAccount': loan_pda,
+                    'lender': lender_keypair.pubkey(),
+                    'borrower': borrower,
+                    'system_program': SYS_PROGRAM_ID,
+                }
+            )
         )
-
+        
+        # Create and sign transaction
+        tx = Transaction()
+        tx.recent_blockhash = recent_blockhash.value.blockhash
+        tx.add(ix)
+        tx.sign(lender_keypair)
+        
+        # Send signed transaction (removed the list brackets)
+        tx_sig = await client.send_transaction(
+            tx,
+            lender_keypair,  # Changed from [lender_keypair] to lender_keypair
+            opts=TxOpts(skip_preflight=True)
+        )
+        
+        logger.info(f"Transaction sent: {tx_sig}")
+        
         return jsonify({
             'success': True,
-            'transaction': str(tx),
-            'timestamp': timestamp
+            'transaction': str(tx_sig),
+            'loanPDA': str(loan_pda)
         })
+        
     except Exception as e:
+        logger.error(f"Error in create_loan: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # Make payment endpoint
 @app.route('/api/loans/<loan_pda>/payments', methods=['POST'])
+@async_route
 async def make_payment(loan_pda):
     try:
         data = request.json
         client, program, _ = await get_solana_client()
         
-        payment_amount = data['paymentAmount']
-        borrower_keypair = Keypair.from_secret_key(
-            bytes(data['borrowerPrivateKey'])
+        # Convert borrower's private key to keypair
+        if 'borrowerPrivateKey' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Borrower private key is required'
+            }), 400
+            
+        try:
+            borrower_keypair = Keypair.from_base58_string(data['borrowerPrivateKey'])
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Invalid borrower private key: {str(e)}'
+            }), 400
+        
+        # Verify the borrower's public key matches
+        if str(borrower_keypair.pubkey()) != data['borrowerPublicKey']:
+            return jsonify({
+                'success': False,
+                'error': 'Borrower signature does not match public key'
+            }), 400
+        
+        lender = Pubkey.from_string(data['lenderPublicKey'])
+        payment_amount = int(data['paymentAmount'])
+        loan_pda_pubkey = Pubkey.from_string(loan_pda)
+        
+        # Create provider with borrower's wallet
+        provider = Provider(
+            client,
+            Wallet(borrower_keypair),
+            opts=None
         )
-
+        
+        # Create program instance with borrower's provider
+        program = Program(program.idl, program.program_id, provider)
+        
+        # Fetch and validate loan account
+        try:
+            loan_account = await program.account["LoanAccount"].fetch(loan_pda_pubkey)
+            
+            if not loan_account.is_active:
+                return jsonify({
+                    'success': False,
+                    'error': 'Loan is not active'
+                }), 400
+                
+            if loan_account.borrower != borrower_keypair.pubkey():
+                return jsonify({
+                    'success': False,
+                    'error': 'Only the borrower can make payments'
+                }), 403
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to fetch loan account: {str(e)}'
+            }), 404
+        
+        ctx = Context(
+            accounts={
+                'loanAccount': loan_pda_pubkey,
+                'lender': lender,
+                'borrower': borrower_keypair.pubkey(),
+                'system_program': SYS_PROGRAM_ID,
+            },
+            signers=[borrower_keypair],  # Include borrower's keypair for signing
+            remaining_accounts=[],
+            pre_instructions=[],
+            post_instructions=[],
+        )
+        
+        logger.info(f"Making payment of {payment_amount} lamports to loan {loan_pda}")
+        
         tx = await program.rpc["make_payment"](
             payment_amount,
-            accounts={
-                'loanAccount': Pubkey(loan_pda),
-                'borrower': borrower_keypair.public_key,
-                'lender': program.provider.wallet.public_key,
-            },
-            signers=[borrower_keypair]
+            ctx=ctx
         )
-
-        # Get updated loan info
-        loan_account = await program.account["LoanAccount"].fetch(
-            Pubkey(loan_pda)
-        )
-
+        
+        logger.info(f"Payment transaction sent: {tx}")
+        
+        # Fetch updated loan info
+        updated_loan = await program.account["LoanAccount"].fetch(loan_pda_pubkey)
+        
         return jsonify({
             'success': True,
             'transaction': str(tx),
             'loanStatus': {
-                'paidAmount': str(loan_account.paid_amount),
-                'isActive': loan_account.is_active
+                'paidAmount': str(updated_loan.paid_amount),
+                'isActive': updated_loan.is_active
             }
         })
+        
     except Exception as e:
+        logger.error(f"Error making payment: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # Get loan details endpoint
 @app.route('/api/loans/<loan_pda>', methods=['GET'])
 async def get_loan(loan_pda):
     try:
-        client, program, _ = await get_solana_client()
+        client, program, wallet = await get_solana_client()
         
         loan_account = await program.account["LoanAccount"].fetch(
-            Pubkey(loan_pda)
+            Pubkey.from_string(loan_pda)
         )
 
         return jsonify({
@@ -318,14 +467,8 @@ async def get_loan(loan_pda):
             }
         })
     except Exception as e:
+        logger.error(f"Error fetching loan: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
-# Add this to handle async routes in Flask
-def async_route(route_function):
-    def wrapper(*args, **kwargs):
-        return asyncio.run(route_function(*args, **kwargs))
-    wrapper.__name__ = route_function.__name__
-    return wrapper
 
 # Modify the deploy endpoint with the decorator
 @app.route('/api/deploy', methods=['POST'])
@@ -334,22 +477,25 @@ async def deploy_contract():
     try:
         logger.info("Starting deployment...")
         
-        # Check program file exists
-        program_path = '../anchor/target/deploy/sol_backend.so'
-        if not os.path.exists(program_path):
-            return jsonify({'success': False, 'error': 'Program file not found'}), 404
-            
-        # Get client and program data
+        # Get client and wallet
         client, _, wallet = await get_solana_client()
+        
+        # Check program file exists and read it
+        program_path = '../anchor/target/deploy/sol_backend.so'
         with open(program_path, 'rb') as f:
             program_data = f.read()
+        logger.info(f"Program data size: {len(program_data)} bytes")
         
-        # Create program keypair and get rent
+        # Create program keypair
         program_keypair = Keypair()
+        logger.info(f"New program ID: {program_keypair.pubkey()}")
+        
+        # Get minimum rent
         program_len = len(program_data)
         rent = await client.get_minimum_balance_for_rent_exemption(program_len)
+        logger.info(f"Required rent: {rent.value} lamports")
         
-        # Create program account instruction
+        # Create account
         create_account_ix = Instruction(
             program_id=SYS_PROGRAM_ID,
             accounts=[
@@ -357,14 +503,14 @@ async def deploy_contract():
                 AccountMeta(pubkey=program_keypair.pubkey(), is_signer=True, is_writable=True),
             ],
             data=(
-                bytes([0]) +  # Create account instruction
-                rent.value.to_bytes(8, 'little') +  # Lamports
-                program_len.to_bytes(8, 'little') +  # Space
-                bytes(BPF_LOADER_ID)  # Owner
+                bytes([0]) +
+                rent.value.to_bytes(8, 'little') +
+                program_len.to_bytes(8, 'little') +
+                bytes(BPF_LOADER_ID)
             )
         )
         
-        # Send create account transaction
+        # Send create transaction
         recent_blockhash = await client.get_latest_blockhash()
         create_tx = Transaction()
         create_tx.add(create_account_ix)
@@ -378,63 +524,52 @@ async def deploy_contract():
         )
         logger.info(f"Account created: {str(create_response.value)}")
         
-        # Add delay after account creation
-        await asyncio.sleep(1)
+        # Wait for confirmation
+        await client.confirm_transaction(create_response.value)
+        logger.info("Account creation confirmed")
         
-        # Write program data in chunks
-        CHUNK_SIZE = 900
+        # Write program in smaller chunks
+        CHUNK_SIZE = 500  # Reduced from 800
         chunks = [program_data[i:i + CHUNK_SIZE] for i in range(0, len(program_data), CHUNK_SIZE)]
         write_responses = []
         
         for i, chunk in enumerate(chunks):
-            try:
-                write_ix = Instruction(
-                    program_id=BPF_LOADER_ID,
-                    accounts=[
-                        AccountMeta(pubkey=wallet.public_key, is_signer=True, is_writable=True),
-                        AccountMeta(pubkey=program_keypair.pubkey(), is_signer=True, is_writable=True),
-                    ],
-                    data=bytes([1]) + i.to_bytes(4, 'little') + chunk
-                )
-                
-                write_tx = Transaction()
-                write_tx.add(write_ix)
-                write_tx.recent_blockhash = (await client.get_latest_blockhash()).value.blockhash
-                
-                write_response = await client.send_transaction(
-                    write_tx,
-                    wallet.payer,
-                    program_keypair,
-                    opts=TxOpts(skip_preflight=True)
-                )
-                write_responses.append(str(write_response.value))
-                logger.info(f"Chunk {i+1}/{len(chunks)} written")
-                
-                # Add delay between chunks to avoid rate limiting
-                await asyncio.sleep(0.5)
-                
-            except Exception as e:
-                logger.error(f"Error writing chunk {i}: {str(e)}")
-                # If we hit rate limit, wait longer and retry
-                if "429" in str(e):
-                    logger.info("Rate limit hit, waiting 2 seconds...")
-                    await asyncio.sleep(2)
-                    # Retry the chunk
-                    i -= 1
-                    continue
-                raise e
+            logger.info(f"Writing chunk {i+1}/{len(chunks)} (size: {len(chunk)} bytes)")
+            write_ix = Instruction(
+                program_id=BPF_LOADER_ID,
+                accounts=[
+                    AccountMeta(pubkey=wallet.public_key, is_signer=True, is_writable=True),
+                    AccountMeta(pubkey=program_keypair.pubkey(), is_signer=False, is_writable=True),
+                ],
+                data=bytes([1]) + i.to_bytes(4, 'little') + chunk
+            )
             
-        # Add delay before finalize
-        await asyncio.sleep(1)
+            write_tx = Transaction()
+            write_tx.add(write_ix)
+            write_tx.recent_blockhash = (await client.get_latest_blockhash()).value.blockhash
+            
+            write_response = await client.send_transaction(
+                write_tx,
+                wallet.payer,
+                opts=TxOpts(skip_preflight=True)
+            )
+            write_responses.append(str(write_response.value))
+            
+            # Wait for confirmation of each chunk
+            await client.confirm_transaction(write_response.value)
+            logger.info(f"Chunk {i+1} confirmed")
+            await asyncio.sleep(1)
+            
+        logger.info("All chunks written successfully")
         
-        # Finalize the deployment
+        # Finalize program
         finalize_ix = Instruction(
             program_id=BPF_LOADER_ID,
             accounts=[
                 AccountMeta(pubkey=wallet.public_key, is_signer=True, is_writable=True),
-                AccountMeta(pubkey=program_keypair.pubkey(), is_signer=True, is_writable=True),
+                AccountMeta(pubkey=program_keypair.pubkey(), is_signer=False, is_writable=True),
             ],
-            data=bytes([2])  # Finalize instruction
+            data=bytes([2])
         )
         
         finalize_tx = Transaction()
@@ -444,10 +579,12 @@ async def deploy_contract():
         finalize_response = await client.send_transaction(
             finalize_tx,
             wallet.payer,
-            program_keypair,
             opts=TxOpts(skip_preflight=True)
         )
-        logger.info("Program deployment finalized")
+        
+        # Wait for finalization
+        await client.confirm_transaction(finalize_response.value)
+        logger.info("Program finalized")
         
         return jsonify({
             'success': True,
@@ -458,14 +595,14 @@ async def deploy_contract():
         })
         
     except Exception as e:
-        logger.error(f"Deployment error: {str(e)}")
+        logger.error(f"Error in deploy_contract: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # Get deployment status
 @app.route('/api/deploy/<signature>', methods=['GET'])
 async def get_deploy_status(signature):
     try:
-        client, _, _ = await get_solana_client()
+        client, program_id, _ = await get_solana_client()
         status = await client.get_transaction(signature)
         
         return jsonify({
@@ -484,7 +621,7 @@ async def get_deploy_status(signature):
 @async_route
 async def get_wallet_balance():
     try:
-        client, _, wallet = await get_solana_client()
+        client, program_id, wallet = await get_solana_client()
         balance_response = await client.get_balance(wallet.public_key)
         
         return jsonify({
@@ -504,7 +641,7 @@ async def get_wallet_balance():
 @async_route
 async def get_wallet_address():
     try:
-        _, _, wallet = await get_solana_client()
+        _, program_id, wallet = await get_solana_client()
         return jsonify({
             'success': True,
             'address': str(wallet.public_key)
@@ -529,7 +666,7 @@ async def transfer_sol():
                 'error': 'Missing destination or amount in request'
             }), 400
             
-        client, _, wallet = await get_solana_client()
+        client, program_id, wallet = await get_solana_client()
         
         # Convert SOL to lamports
         amount_sol = float(data['amount'])
@@ -606,7 +743,7 @@ def login():
 @async_route
 async def get_program_info(program_id):
     try:
-        client, _, _ = await get_solana_client()
+        client, program_id, _ = await get_solana_client()
         program_info = await client.get_account_info(Pubkey.from_string(program_id))
         
         return jsonify({
@@ -626,4 +763,5 @@ async def get_program_info(program_id):
 # ✅ Run the Flask App
 if __name__ == '__main__':
     app.run(debug=True)
+
 

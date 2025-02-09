@@ -59,16 +59,49 @@ npm install
 2. Create `.env` file in `anchor/app`:
 ```bash
 WALLET_PRIVATE_KEY=["your","wallet","private","key","array"]
-PROGRAM_ID="C3xL6yYf9jyCJfthRE2nWYeLS1RLDkaDnUf2zcrGYtMj"
+PROGRAM_ID="your_program_id_here"  # You'll get this after deployment
 ```
 
-3. Build and deploy:
+## Deployment Steps
+
+1. Clean the existing build:
 ```bash
-npm run build
+rm -rf target/
+```
+
+2. Build the program:
+```bash
+anchor build
+```
+
+3. Get your program ID:
+```bash
+anchor keys list
+```
+
+4. Update the program ID in three places:
+   - At the top of `programs/sol-backend/src/lib.rs`:
+   ```rust
+   declare_id!("your_program_id_here");
+   ```
+   - In `Anchor.toml`:
+   ```toml
+   [programs.devnet]
+   sol_backend = "your_program_id_here"
+   ```
+   - In your `.env` file as shown above
+
+5. Rebuild with updated program ID:
+```bash
+anchor build
+```
+
+6. Deploy to devnet:
+```bash
 anchor deploy --provider.cluster devnet
 ```
 
-4. Start the server:
+7. Start the server:
 ```bash
 npm start
 ```
