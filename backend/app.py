@@ -16,6 +16,11 @@ import asyncio
 from base64 import b64encode
 import json
 import os
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -54,7 +59,7 @@ async def get_solana_client():
         provider = Provider(client, wallet)
         return client, None, wallet
     except Exception as e:
-        print(f"Error in get_solana_client: {str(e)}")
+        logger.error(f"Error in get_solana_client: {str(e)}")
         raise
 
 # ✅ Existing API - Get a Single Loan Post
@@ -321,60 +326,99 @@ def async_route(route_function):
 @async_route
 async def deploy_contract():
     try:
-        print("=== Starting deployment process ===")
-        client, _, wallet = await get_solana_client()
+        logger.info("=== Starting deployment process ===")
         
-        # Read the compiled program binary
+        # Check if program file exists
         program_path = '../anchor/target/deploy/sol_backend.so'
-        with open(program_path, 'rb') as f:
-            program_data = f.read()
+        if not os.path.exists(program_path):
+            logger.error(f"Program file not found at {program_path}")
+            return jsonify({
+                'success': False,
+                'error': f"Program file not found at {program_path}"
+            }), 404
+            
+        # Get client
+        try:
+            client, _, wallet = await get_solana_client()
+            logger.info(f"Got client and wallet. Wallet pubkey: {wallet.public_key}")
+        except Exception as e:
+            logger.error(f"Error getting Solana client: {str(e)}")
+            return jsonify({
+                'success': False,
+                'error': f"Failed to connect to Solana: {str(e)}"
+            }), 500
         
-        print(f"Read program binary, size: {len(program_data)} bytes")
+        # Read program file
+        try:
+            with open(program_path, 'rb') as f:
+                program_data = f.read()
+            logger.info(f"Read program binary, size: {len(program_data)} bytes")
+        except Exception as e:
+            logger.error(f"Error reading program file: {str(e)}")
+            return jsonify({
+                'success': False,
+                'error': f"Failed to read program file: {str(e)}"
+            }), 500
         
-        # Create program address
+        # Create program keypair
         program_keypair = Keypair()
-        print(f"Program ID: {program_keypair.pubkey()}")
+        logger.info(f"Program ID: {program_keypair.pubkey()}")
         
-        # Calculate required space and rent
-        program_len = len(program_data)
-        rent = await client.get_minimum_balance_for_rent_exemption(program_len)
-        
-        # Create deployment instruction
-        deploy_ix = Instruction(
-            program_id=SYS_PROGRAM_ID,
-            accounts=[
-                AccountMeta(pubkey=wallet.public_key, is_signer=True, is_writable=True),
-                AccountMeta(pubkey=program_keypair.pubkey(), is_signer=True, is_writable=True),
-            ],
-            data=program_data
-        )
-        
-        # Create transaction
-        recent_blockhash = await client.get_latest_blockhash()
-        tx = Transaction()
-        tx.add(deploy_ix)
-        tx.recent_blockhash = recent_blockhash.value.blockhash
-        
-        # Sign transaction
-        tx.sign(wallet.payer, program_keypair)
-        
-        print("Sending deployment transaction...")
-        response = await client.send_transaction(tx)
-        print(f"Response: {response}")
-        
-        return jsonify({
-            'success': True,
-            'programId': str(program_keypair.pubkey()),
-            'signature': str(response['result']),
-            'message': 'Contract deployment initiated'
-        })
-        
+        try:
+            # Calculate rent
+            program_len = len(program_data)
+            rent = await client.get_minimum_balance_for_rent_exemption(program_len)
+            logger.info(f"Required rent: {rent}")
+            
+            # Create deployment instruction
+            deploy_ix = Instruction(
+                program_id=SYS_PROGRAM_ID,
+                accounts=[
+                    AccountMeta(pubkey=wallet.public_key, is_signer=True, is_writable=True),
+                    AccountMeta(pubkey=program_keypair.pubkey(), is_signer=True, is_writable=True),
+                ],
+                data=program_data
+            )
+            logger.info("Created deployment instruction")
+            
+            # Create and sign transaction
+            recent_blockhash = await client.get_latest_blockhash()
+            tx = Transaction()
+            tx.add(deploy_ix)
+            tx.recent_blockhash = recent_blockhash.value.blockhash
+            tx.sign(wallet.payer, program_keypair)
+            logger.info("Created and signed transaction")
+            
+            # Send transaction
+            logger.info("Sending deployment transaction...")
+            response = await client.send_transaction(tx)
+            logger.info(f"Response: {response}")
+            
+            return jsonify({
+                'success': True,
+                'programId': str(program_keypair.pubkey()),
+                'signature': str(response['result']),
+                'message': 'Contract deployment initiated'
+            })
+            
+        except Exception as e:
+            logger.error(f"Error during deployment: {str(e)}")
+            logger.error(f"Error type: {type(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return jsonify({
+                'success': False,
+                'error': str(e),
+                'error_type': str(type(e)),
+                'traceback': traceback.format_exc()
+            }), 500
+            
     except Exception as e:
-        print(f"=== ERROR IN DEPLOYMENT ===")
-        print(f"Error type: {type(e)}")
-        print(f"Error message: {str(e)}")
+        logger.error(f"=== UNHANDLED ERROR IN DEPLOYMENT ===")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error message: {str(e)}")
         import traceback
-        print(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({
             'success': False,
             'error': str(e),
