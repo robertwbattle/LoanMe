@@ -292,125 +292,72 @@ def _build_cors_preflight_response():
 
 # Create loan endpoint
 @app.route('/api/loans', methods=['POST'])
-@async_route
-async def create_loan():
+def create_loan():
     try:
         data = request.json
-        client, program, _ = await get_solana_client()
         
-        logger.info("=== Starting Loan Creation ===")
-        logger.info(f"Request data: {data}")
-        
-        # Create keypair from private key
-        private_key_bytes = bytes(data['lenderPrivateKey'])
-        lender_keypair = Keypair.from_bytes(private_key_bytes)
-        logger.info(f"Lender pubkey: {lender_keypair.pubkey()}")
-        
-        borrower = Pubkey.from_string(data['borrowerPublicKey'])
+        # Extract loan details
+        lender_id = data['lender_id']
         loan_amount = int(data['loanAmount'])
         apy = int(data['apy'])
         duration = int(data['duration'])
-        timestamp = int(time.time() * 1000)
+        payment_schedule_id = data.get('payment_schedule_id')
         
+        logger.info("=== Creating New Loan Post ===")
         logger.info(f"Loan details:")
+        logger.info(f"- Lender ID: {lender_id}")
         logger.info(f"- Amount: {loan_amount}")
         logger.info(f"- APY: {apy}")
         logger.info(f"- Duration: {duration}")
-        logger.info(f"- Timestamp: {timestamp}")
-        logger.info(f"- Borrower: {borrower}")
         
-        [loan_pda, bump] = Pubkey.find_program_address(
-            [
-                bytes("loan", 'utf-8'),
-                bytes(lender_keypair.pubkey()),
-                bytes(borrower),
-                timestamp.to_bytes(8, 'little')
-            ],
-            program.program_id
-        )
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-        logger.info(f"Generated PDA: {loan_pda} with bump: {bump}")
+        # First, verify the lender exists and get their wallet
+        cursor.execute('''
+            SELECT solana_address, solana_private_key 
+            FROM Users 
+            WHERE user_id = ?
+        ''', (lender_id,))
         
-        # First create the loan account on the blockchain
-        recent_blockhash = await client.get_latest_blockhash()
-        logger.info(f"Recent blockhash: {recent_blockhash.value.blockhash}")
+        lender_data = cursor.fetchone()
+        if not lender_data:
+            raise Exception("Lender not found")
+            
+        lender_address, lender_private_key = lender_data
         
-        # Create loan account instruction
-        logger.info("Creating program instruction...")
-        ix = program.instruction["create_loan"](
-            loan_amount,
-            apy,
-            duration,
-            timestamp,
-            ctx=Context(
-                accounts={
-                    'loan_account': loan_pda,
-                    'lender': lender_keypair.pubkey(),
-                    'borrower': borrower,
-                    'system_program': SYS_PROGRAM_ID,
-                },
-                signers=[lender_keypair]
+        # Insert new loan post
+        cursor.execute('''
+            INSERT INTO Posts (
+                user_id, 
+                post_type, 
+                loan_amount, 
+                interest_rate, 
+                payment_schedule_id, 
+                duration,
+                status,
+                lender_wallet
             )
-        )
+            VALUES (?, 'lend', ?, ?, ?, ?, 'pending', ?)
+        ''', (lender_id, loan_amount, apy, payment_schedule_id, duration, lender_address))
         
-        # Create transaction for loan creation
-        tx = Transaction()
-        tx.add(ix)
-        tx.recent_blockhash = recent_blockhash.value.blockhash
-        tx.fee_payer = lender_keypair.pubkey()
-        tx.sign(lender_keypair)
+        post_id = cursor.lastrowid
         
-        # Send loan creation transaction
-        logger.info("Sending loan creation transaction...")
-        loan_tx_sig = await client.send_raw_transaction(
-            tx.serialize(),
-            opts=TxOpts(skip_preflight=True)
-        )
-        
-        # Wait for confirmation
-        await client.confirm_transaction(loan_tx_sig.value)
-        logger.info(f"Loan creation confirmed: {loan_tx_sig.value}")
-        
-        # Now transfer the loan amount to the borrower
-        logger.info("Initiating loan amount transfer...")
-        transfer_ix = transfer(
-            TransferParams(
-                from_pubkey=lender_keypair.pubkey(),
-                to_pubkey=borrower,
-                lamports=loan_amount
-            )
-        )
-        
-        # Create new transaction for transfer
-        transfer_tx = Transaction()
-        transfer_tx.add(transfer_ix)
-        transfer_tx.recent_blockhash = (await client.get_latest_blockhash()).value.blockhash
-        transfer_tx.fee_payer = lender_keypair.pubkey()
-        transfer_tx.sign(lender_keypair)
-        
-        # Send transfer transaction
-        logger.info("Sending transfer transaction...")
-        transfer_tx_sig = await client.send_raw_transaction(
-            transfer_tx.serialize(),
-            opts=TxOpts(skip_preflight=True)
-        )
-        
-        # Wait for transfer confirmation
-        await client.confirm_transaction(transfer_tx_sig.value)
-        logger.info(f"Transfer confirmed: {transfer_tx_sig.value}")
+        conn.commit()
+        conn.close()
         
         return jsonify({
             'success': True,
-            'loan': {
-                'signature': str(loan_tx_sig.value),
-                'pda': str(loan_pda)
-            },
-            'transfer': {
-                'signature': str(transfer_tx_sig.value),
-                'amount': loan_amount / 1e9  # Convert lamports to SOL
+            'post_id': post_id,
+            'message': 'Loan post created successfully',
+            'details': {
+                'amount': loan_amount,
+                'apy': apy,
+                'duration': duration,
+                'lender_wallet': lender_address
             }
         })
-
+        
     except Exception as e:
         logger.error(f"Error in create_loan: {str(e)}")
         logger.exception("Full traceback:")
