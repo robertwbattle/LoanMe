@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import { Github, Twitter } from "@/components/shared/icons";
 import Card from "../components/home/card";
-import WebVitals from "../components/home/web-vitals"; // Add this import
+import WebVitals from "../components/home/web-vitals"; 
+import CoinGeckoWidget from "../components/home/CoinGeckoWidget";
 
 
 export default function Home() {
@@ -104,6 +105,12 @@ export default function Home() {
           </div>
         }
       />
+
+      <Card
+        demo={<CoinGeckoWidget />}
+        large={true}
+      />
+
       </div>
     </main>
   );
