@@ -927,9 +927,7 @@ def pay_loan(loan_id):
 
     return jsonify({'success': True, 'message': 'Payment successful, successful_payments updated.'})
 
-
-
-    @app.route('/api/transaction/request', methods=['POST'])
+@app.route('/api/transactions', methods=['POST'])
 def post_transaction_request():
     try:
         data = request.json
@@ -1029,71 +1027,71 @@ def transfer_money():
 
 # API to transfer SOL using Solana API
 @app.route('/api/solana/transfer', methods=['POST'])
-def solana_transfer():
+@async_route
+async def solana_transfer():
     try:
         data = request.json
-        private_key = data.get('private_key')
-        recipient_wallet = data.get('wallet_to')
-        transfer_amount = data.get('transfer_amount')  # Amount in SOL
-        transaction_id = data.get('transaction_id')
-
-        if not all([private_key, recipient_wallet, transfer_amount, transaction_id]):
-            return jsonify({
-                'success': False,
-                'error': 'Missing required fields: private_key, wallet_to, transfer_amount, transaction_id'
-            }), 400
-
-        # Solana API request
-        response = requests.post(
-            'https://api.solanaapis.com/transfer/sol',
-            json={
-                'private_key': private_key,
-                'wallet_to': recipient_wallet,
-                'transfer_amount': transfer_amount
-            }
+        client, program, _ = await get_solana_client()
+        
+        logger.info("=== Starting SOL Transfer ===")
+        logger.info(f"Request data: {data}")
+        
+        # Create keypair from private key
+        private_key_bytes = bytes(data['private_key'])
+        sender_keypair = Keypair.from_bytes(private_key_bytes)
+        logger.info(f"Sender pubkey: {sender_keypair.pubkey()}")
+        
+        recipient = Pubkey.from_string(data['wallet_to'])
+        amount_sol = float(data['transfer_amount'])
+        amount_lamports = int(amount_sol * 1e9)  # Convert SOL to lamports
+        
+        logger.info(f"Transfer details:")
+        logger.info(f"- Amount: {amount_sol} SOL ({amount_lamports} lamports)")
+        logger.info(f"- Recipient: {recipient}")
+        
+        # Get recent blockhash
+        recent_blockhash = await client.get_latest_blockhash()
+        logger.info(f"Recent blockhash: {recent_blockhash.value.blockhash}")
+        
+        # Create transfer instruction
+        transfer_ix = transfer(
+            TransferParams(
+                from_pubkey=sender_keypair.pubkey(),
+                to_pubkey=recipient,
+                lamports=amount_lamports
+            )
         )
-
-        if response.status_code == 200:
-            tx_data = response.json()
-
-            # Update the transaction in the database
-            conn = get_db_connection()
-            cursor = conn.cursor()
-
-            cursor.execute('''
-                UPDATE Transactions
-                SET blockchain_tx_id = ?, status = 'completed'
-                WHERE transaction_id = ?
-            ''', (tx_data.get('transaction_id', 'unknown'), transaction_id))
-
-            # Update wallet_amt for the sender and receiver
-            cursor.execute('''
-                UPDATE Users
-                SET wallet_amt = wallet_amt - ?
-                WHERE solana_private_key = ?
-            ''', (transfer_amount, private_key))
-
-            cursor.execute('''
-                UPDATE Users
-                SET wallet_amt = wallet_amt + ?
-                WHERE solana_address = ?
-            ''', (transfer_amount, recipient_wallet))
-
-            conn.commit()
-            conn.close()
-
-            return jsonify({
-                'success': True,
-                'message': 'SOL transferred successfully.',
-                'transaction_id': tx_data.get('transaction_id')
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': response.json().get('error', 'Transfer failed')
-            }), response.status_code
-
+        
+        # Create transaction
+        tx = Transaction()
+        tx.add(transfer_ix)
+        tx.recent_blockhash = recent_blockhash.value.blockhash
+        tx.fee_payer = sender_keypair.pubkey()
+        
+        # Sign transaction
+        tx.sign(sender_keypair)
+        
+        # Send transaction
+        logger.info("Sending transaction...")
+        tx_sig = await client.send_raw_transaction(
+            tx.serialize(),
+            opts=TxOpts(skip_preflight=True)
+        )
+        
+        # Wait for confirmation
+        await client.confirm_transaction(tx_sig.value)
+        logger.info(f"Transfer confirmed: {tx_sig.value}")
+        
+        return jsonify({
+            'success': True,
+            'signature': str(tx_sig.value),
+            'amount': amount_sol,
+            'recipient': str(recipient)
+        })
+        
     except Exception as e:
+        logger.error(f"Error in solana_transfer: {str(e)}")
+        logger.exception("Full traceback:")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
