@@ -4,6 +4,8 @@ import pandas as pd
 import requests
 import os
 from dotenv import load_dotenv
+import json
+import ast
 
 # Load environment variables from .env file
 load_dotenv()
@@ -59,6 +61,15 @@ def get_program_info(program_id):
         return {'success': False, 'error': 'Invalid JSON response'}
     except Exception as err:
         return {'success': False, 'error': f'Other error occurred: {err}'}
+
+def convert_private_key_to_array(private_key_str):
+    """Convert string representation of private key array back to array of integers"""
+    try:
+        # Remove any whitespace and convert to array of integers
+        return ast.literal_eval(private_key_str)
+    except:
+        st.error("Error converting private key string to array")
+        return None
 
 # Streamlit app
 st.title("LoanMe Dashboard")
@@ -171,3 +182,125 @@ if st.button("Send SOL"):
             st.error(f"Transfer failed: {result['error']}")
     else:
         st.error("Please enter both destination address and amount.")
+
+# Add to sidebar
+with st.sidebar:
+    st.header("Loan Actions")
+    action = st.selectbox(
+        "Select Action",
+        ["Check Balance", "Create Loan", "Transfer SOL"]
+    )
+
+if action == "Check Balance":
+    st.header("Check Wallet Balance")
+    wallet_address = st.text_input("Enter Wallet Address")
+    
+    if st.button("Check Balance"):
+        try:
+            response = requests.get(f"http://127.0.0.1:5000/api/solana/balance/{wallet_address}")
+            if response.ok:
+                data = response.json()
+                if data['success']:
+                    st.success(f"Balance: {data['balance_sol']} SOL")
+                else:
+                    st.error(f"Error: {data.get('error', 'Unknown error')}")
+        except Exception as e:
+            st.error(f"Error checking balance: {str(e)}")
+
+elif action == "Create Loan":
+    st.header("Create New Loan")
+    loan_amount = st.number_input("Loan Amount (SOL)", min_value=0.1, step=0.1)
+    interest_rate = st.number_input("Interest Rate (%)", min_value=0.1, step=0.1)
+    
+    # Radio button to select if user is lender or borrower
+    role = st.radio("I am a:", ("Lender", "Borrower"))
+    wallet_address = st.text_input("Your Wallet Address")
+    
+    if st.button("Create Loan"):
+        try:
+            payload = {
+                "loan_amount": loan_amount,
+                "interest_rate": interest_rate,
+                "lender_wallet": wallet_address if role == "Lender" else None,
+                "borrower_wallet": wallet_address if role == "Borrower" else None
+            }
+            
+            response = requests.post(
+                "http://127.0.0.1:5000/api/posts",
+                json=payload
+            )
+            
+            if response.ok:
+                data = response.json()
+                if data['success']:
+                    st.success(f"Loan post created! Post ID: {data['post_id']}")
+                    st.json(data['details'])
+                else:
+                    st.error(f"Error: {data.get('error', 'Unknown error')}")
+        except Exception as e:
+            st.error(f"Error creating loan: {str(e)}")
+
+elif action == "Transfer SOL":
+    st.header("Transfer SOL")
+    
+    # Get sender's public key
+    sender_public = st.text_input("From (Public Key)")
+    
+    # Get recipient's public key
+    recipient_public = st.text_input("To (Public Key)")
+    
+    # Amount to transfer
+    amount = st.number_input("Amount (SOL)", min_value=0.000001, step=0.1)
+    
+    if st.button("Transfer"):
+        try:
+            # First, fetch the sender's private key from the database
+            conn = sqlite3.connect('loan_platform.db')
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT solana_private_key 
+                FROM Users 
+                WHERE solana_address = ?
+            ''', (sender_public,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if not result:
+                st.error("Sender's wallet not found in database")
+                return
+                
+            private_key_str = result[0]
+            private_key_array = convert_private_key_to_array(private_key_str)
+            
+            if not private_key_array:
+                st.error("Invalid private key format")
+                return
+            
+            # Make the transfer request
+            payload = {
+                "private_key": private_key_array,
+                "wallet_to": recipient_public,
+                "transfer_amount": amount
+            }
+            
+            response = requests.post(
+                "http://127.0.0.1:5000/api/solana/transfer",
+                json=payload
+            )
+            
+            if response.ok:
+                data = response.json()
+                if data['success']:
+                    st.success(f"Transfer successful!")
+                    st.write("Transaction Details:")
+                    st.json({
+                        "signature": data['signature'],
+                        "amount": data['amount'],
+                        "recipient": data['recipient']
+                    })
+                else:
+                    st.error(f"Error: {data.get('error', 'Unknown error')}")
+        except Exception as e:
+            st.error(f"Error during transfer: {str(e)}")
