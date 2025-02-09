@@ -14,24 +14,23 @@ def check_existing_wallet(user_id):
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT wallet_address, private_key 
-            FROM user_wallets 
+            SELECT solana_address, solana_private_key 
+            FROM Users 
             WHERE user_id = ?
         """, (user_id,))
         
         wallet = cursor.fetchone()
         conn.close()
         
-        if wallet:
+        if wallet and wallet[0] and wallet[1]:  # Check if both address and private key exist
             return True, {
-                "wallet_address": wallet[0],
-                "private_key": wallet[1]
+                "solana_address": wallet[0],
+                "solana_private_key": wallet[1]
             }
         return False, None
         
     except Exception as e:
         return None, str(e)
-
 
 
 # ✅ Existing API - Get a Single Loan Post
@@ -113,49 +112,44 @@ def generate_wallet(user_id):
                 "success": True,
                 "message": "Wallet already exists for this user",
                 "wallet": {
-                    "address": existing_wallet['wallet_address'],
-                    "private_key": existing_wallet['private_key']  # Note: In production, handle private keys securely
+                    "address": existing_wallet['solana_address'],
+                    "private_key": existing_wallet['solana_private_key']
                 },
                 "user_id": user_id
             })
             
         # If no wallet exists, proceed with generation
-        # Tatum API configuration
         TATUM_API_KEY = os.getenv('TATUM_API_KEY')
         TATUM_API_URL = os.getenv('TATUM_API_URL')
         
-        # Headers for the API request
         headers = {
             "x-api-key": TATUM_API_KEY
         }
         
-        # Make the API request
         response = requests.get(TATUM_API_URL, headers=headers)
         
         if response.status_code == 200:
             wallet_data = response.json()
             
-            # Store wallet information in database
+            # Update user record with wallet information
             conn = sqlite3.connect('loan_platform.db')
             cursor = conn.cursor()
             
-            # Insert new wallet information
             cursor.execute("""
-                INSERT INTO user_wallets 
-                (user_id, wallet_address, private_key) 
-                VALUES (?, ?, ?)
-            """, (user_id, wallet_data['address'], wallet_data['privateKey']))
+                UPDATE Users 
+                SET solana_address = ?, solana_private_key = ?
+                WHERE user_id = ?
+            """, (wallet_data['address'], wallet_data['privateKey'], user_id))
             
             conn.commit()
             conn.close()
             
-            # Return wallet information
             return jsonify({
                 "success": True,
                 "message": "New wallet generated successfully",
                 "wallet": {
                     "address": wallet_data['address'],
-                    "private_key": wallet_data['privateKey']  # Note: In production, handle private keys securely
+                    "private_key": wallet_data['privateKey']
                 },
                 "user_id": user_id
             })
