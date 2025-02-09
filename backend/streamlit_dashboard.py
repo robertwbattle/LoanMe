@@ -1,6 +1,7 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+import requests
 
 # Function to fetch data from the database
 def fetch_data(query):
@@ -9,8 +10,53 @@ def fetch_data(query):
     conn.close()
     return df
 
+# Function to transfer SOL
+def transfer_sol(destination, amount):
+    url = 'http://127.0.0.1:5000/api/wallet/transfer'
+    payload = {
+        'destination': destination,
+        'amount': amount
+    }
+    response = requests.post(url, json=payload)
+    return response.json()
+
+# Function to get wallet balance
+def get_wallet_balance():
+    url = 'http://127.0.0.1:5000/api/wallet/balance'
+    response = requests.get(url)
+    return response.json()
+
+# Function to get wallet address
+def get_wallet_address():
+    url = 'http://127.0.0.1:5000/api/wallet/address'
+    response = requests.get(url)
+    return response.json()
+
+# Function to deploy contract
+def deploy_contract():
+    url = 'http://127.0.0.1:5000/api/deploy'
+    response = requests.post(url)
+    return response.json()
+
 # Streamlit app
 st.title("LoanMe Dashboard")
+
+# Wallet Address
+st.header("Admin Wallet Address")
+wallet_address = get_wallet_address()
+if wallet_address['success']:
+    st.write(f"Wallet Address: {wallet_address['address']}")
+else:
+    st.error(f"Failed to fetch wallet address: {wallet_address['error']}")
+
+# Deploy Contract
+st.header("Deploy Contract")
+if st.button("Deploy Contract"):
+    deploy_result = deploy_contract()
+    if deploy_result['success']:
+        st.success(f"Contract deployed successfully! Program ID: {deploy_result['programId']}")
+    else:
+        st.error(f"Contract deployment failed: {deploy_result['error']}")
 
 # Users Data
 st.header("Users Data")
@@ -64,24 +110,24 @@ num_transactions_df = fetch_data(num_transactions_query)
 num_transactions = num_transactions_df['num_transactions'][0] if num_transactions_df['num_transactions'][0] is not None else 0
 st.write(f"Number of Transactions: {num_transactions}")
 
-# Layout adjustments
-st.sidebar.header("LoanMe Dashboard")
-st.sidebar.write("Use the sidebar to navigate through different sections of the dashboard.")
+# Wallet Balance
+st.header("Wallet Balance")
+wallet_balance = get_wallet_balance()
+if wallet_balance['success']:
+    st.write(f"Wallet Balance: {wallet_balance['balance']} SOL")
+else:
+    st.error(f"Failed to fetch wallet balance: {wallet_balance['error']}")
 
-st.sidebar.subheader("Users Data")
-st.sidebar.dataframe(users_df)
-
-st.sidebar.subheader("Posts Data")
-st.sidebar.dataframe(posts_df)
-
-st.sidebar.subheader("Transactions Data")
-st.sidebar.dataframe(transactions_df)
-
-st.sidebar.subheader("Payments Data")
-st.sidebar.dataframe(payments_df)
-
-st.sidebar.subheader("Summary")
-st.sidebar.write(f"Total Trading Volume: ${total_volume:.2f}")
-st.sidebar.write(f"Average Loan Amount: ${average_loan:.2f}")
-st.sidebar.write(f"Number of Users: {num_users}")
-st.sidebar.write(f"Number of Transactions: {num_transactions}")
+# Transfer SOL
+st.header("Transfer SOL")
+destination = st.text_input("Destination Address")
+amount = st.text_input("Amount (SOL)")
+if st.button("Send SOL"):
+    if destination and amount:
+        result = transfer_sol(destination, amount)
+        if result['success']:
+            st.success(f"Transfer successful! Signature: {result['signature']}")
+        else:
+            st.error(f"Transfer failed: {result['error']}")
+    else:
+        st.error("Please enter both destination address and amount.")

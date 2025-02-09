@@ -490,6 +490,8 @@ async def get_wallet_balance():
     try:
         client, _, wallet = await get_solana_client()
         balance_response = await client.get_balance(wallet.public_key)
+
+        
         
         return jsonify({
             'success': True,
@@ -561,19 +563,18 @@ async def transfer_sol():
         tx.recent_blockhash = recent_blockhash.value.blockhash
         tx.fee_payer = wallet.public_key
         
+        # Sign transaction
+        tx.sign(wallet.payer)
+        
         # Send transaction with signer
         logger.info("Sending transaction with signer...")
-        opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-        signature = await client.send_transaction(
-            tx, 
-            wallet.payer,
-            opts=opts
-        )
+        serialized_tx = tx.serialize()
+        signature = await client.send_raw_transaction(serialized_tx)
         logger.info(f"Transfer complete. Signature: {signature}")
         
         return jsonify({
             'success': True,
-            'signature': str(signature.value),
+            'signature': str(signature),
             'amount': amount_sol,
             'destination': str(destination)
         })
