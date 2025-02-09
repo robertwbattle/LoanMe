@@ -1094,8 +1094,34 @@ async def solana_transfer():
         logger.exception("Full traceback:")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-
-
+@app.route('/api/solana/balance/<wallet_address>', methods=['GET'])
+@async_route
+async def fetch_solana_balance(wallet_address):
+    try:
+        client, _, _ = await get_solana_client()
+        
+        # Convert address string to Pubkey
+        pubkey = Pubkey.from_string(wallet_address)
+        
+        # Get balance
+        balance = await client.get_balance(pubkey)
+        balance_sol = balance.value / 1e9  # Convert lamports to SOL
+        
+        logger.info(f"Fetched balance for {wallet_address}: {balance_sol} SOL")
+        
+        return jsonify({
+            'success': True,
+            'wallet': wallet_address,
+            'balance_lamports': balance.value,
+            'balance_sol': balance_sol
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching balance: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 # ✅ Run the Flask App
 if __name__ == '__main__':
