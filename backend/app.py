@@ -9,7 +9,7 @@ from solana.rpc.async_api import AsyncClient
 from anchorpy import Provider, Wallet
 from solana.rpc.commitment import Confirmed
 from solders.instruction import Instruction, AccountMeta
-from solders.system_program import ID as SYS_PROGRAM_ID
+from solders.system_program import ID as SYS_PROGRAM_ID, TransferParams, transfer, create_account
 from solders.message import Message
 from solana.transaction import Transaction
 import asyncio
@@ -17,6 +17,7 @@ from base64 import b64encode
 import json
 import os
 import logging
+from solana.rpc.types import TxOpts
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# BPF Loader program ID (this is the standard BPF loader on Solana)
+BPF_LOADER_ID = Pubkey.from_string("BPFLoader2111111111111111111111111111111111")
+CHUNK_SIZE = 800
 
 # check if there already exist a wallet for the User
 def check_existing_wallet(user_id):
@@ -328,7 +333,7 @@ async def deploy_contract():
     try:
         logger.info("=== Starting deployment process ===")
         
-        # Check if program file exists
+        # Check program file
         program_path = '../anchor/target/deploy/sol_backend.so'
         if not os.path.exists(program_path):
             logger.error(f"Program file not found at {program_path}")
@@ -337,68 +342,102 @@ async def deploy_contract():
                 'error': f"Program file not found at {program_path}"
             }), 404
             
-        # Get client
-        try:
-            client, _, wallet = await get_solana_client()
-            logger.info(f"Got client and wallet. Wallet pubkey: {wallet.public_key}")
-        except Exception as e:
-            logger.error(f"Error getting Solana client: {str(e)}")
-            return jsonify({
-                'success': False,
-                'error': f"Failed to connect to Solana: {str(e)}"
-            }), 500
+        client, _, wallet = await get_solana_client()
+        logger.info(f"Got client and wallet. Wallet pubkey: {wallet.public_key}")
         
-        # Read program file
-        try:
-            with open(program_path, 'rb') as f:
-                program_data = f.read()
-            logger.info(f"Read program binary, size: {len(program_data)} bytes")
-        except Exception as e:
-            logger.error(f"Error reading program file: {str(e)}")
-            return jsonify({
-                'success': False,
-                'error': f"Failed to read program file: {str(e)}"
-            }), 500
+        # Read program
+        with open(program_path, 'rb') as f:
+            program_data = f.read()
+        logger.info(f"Read program binary, size: {len(program_data)} bytes")
         
         # Create program keypair
         program_keypair = Keypair()
         logger.info(f"Program ID: {program_keypair.pubkey()}")
         
         try:
-            # Calculate rent
+            # Calculate required space
             program_len = len(program_data)
-            rent = await client.get_minimum_balance_for_rent_exemption(program_len)
+            rent_response = await client.get_minimum_balance_for_rent_exemption(program_len)
+            rent = rent_response.value  # Extract the actual value from the response
             logger.info(f"Required rent: {rent}")
             
-            # Create deployment instruction
-            deploy_ix = Instruction(
-                program_id=SYS_PROGRAM_ID,
-                accounts=[
-                    AccountMeta(pubkey=wallet.public_key, is_signer=True, is_writable=True),
-                    AccountMeta(pubkey=program_keypair.pubkey(), is_signer=True, is_writable=True),
-                ],
-                data=program_data
-            )
-            logger.info("Created deployment instruction")
+            # Create program account using the proper CreateAccount instruction
+            create_account_ix = create_account(
+                from_pubkey=wallet.public_key,
+                to_pubkey=program_keypair.pubkey(),
+                lamports=rent,
+                space=program_len,
+                owner=BPF_LOADER_ID
+            ).instruction()
             
-            # Create and sign transaction
+            logger.info("Created CreateAccount instruction")
+            
+            # Send create account transaction
             recent_blockhash = await client.get_latest_blockhash()
-            tx = Transaction()
-            tx.add(deploy_ix)
-            tx.recent_blockhash = recent_blockhash.value.blockhash
-            tx.sign(wallet.payer, program_keypair)
-            logger.info("Created and signed transaction")
+            create_tx = Transaction()
+            create_tx.add(create_account_ix)
+            create_tx.recent_blockhash = recent_blockhash.value.blockhash
             
-            # Send transaction
-            logger.info("Sending deployment transaction...")
-            response = await client.send_transaction(tx)
-            logger.info(f"Response: {response}")
+            # Sign with both wallet and program keypair
+            signers = [wallet.payer, program_keypair]
+            create_tx.sign(*signers)
+            
+            logger.info("Sending create account transaction...")
+            create_response = await client.send_transaction(
+                create_tx,
+                *signers
+            )
+            logger.info(f"Create account response: {create_response}")
+            
+            # Split program data into chunks
+            chunks = [program_data[i:i + CHUNK_SIZE] for i in range(0, len(program_data), CHUNK_SIZE)]
+            logger.info(f"Split program into {len(chunks)} chunks")
+            
+            # Send program chunks
+            for i, chunk in enumerate(chunks):
+                write_ix = Instruction(
+                    program_id=BPF_LOADER_ID,
+                    accounts=[
+                        AccountMeta(pubkey=program_keypair.pubkey(), is_signer=False, is_writable=True),
+                    ],
+                    data=bytes([1]) + i.to_bytes(4, 'little') + chunk
+                )
+                
+                recent_blockhash = await client.get_latest_blockhash()
+                write_tx = Transaction()
+                write_tx.add(write_ix)
+                write_tx.recent_blockhash = recent_blockhash.value.blockhash
+                write_tx.sign(wallet.payer)
+                
+                logger.info(f"Sending chunk {i+1}/{len(chunks)}...")
+                write_response = await client.send_transaction(write_tx)
+                logger.info(f"Chunk {i+1} response: {write_response}")
+            
+            # Finalize deployment
+            finalize_ix = Instruction(
+                program_id=BPF_LOADER_ID,
+                accounts=[
+                    AccountMeta(pubkey=program_keypair.pubkey(), is_signer=False, is_writable=True),
+                ],
+                data=bytes([2])
+            )
+            
+            recent_blockhash = await client.get_latest_blockhash()
+            finalize_tx = Transaction()
+            finalize_tx.add(finalize_ix)
+            finalize_tx.recent_blockhash = recent_blockhash.value.blockhash
+            finalize_tx.sign(wallet.payer)
+            
+            logger.info("Sending finalize transaction...")
+            finalize_response = await client.send_transaction(finalize_tx)
+            logger.info(f"Finalize response: {finalize_response}")
             
             return jsonify({
                 'success': True,
                 'programId': str(program_keypair.pubkey()),
-                'signature': str(response['result']),
-                'message': 'Contract deployment initiated'
+                'createTx': str(create_response['result']),
+                'finalizeTx': str(finalize_response['result']),
+                'message': 'Contract deployment completed'
             })
             
         except Exception as e:
@@ -443,6 +482,110 @@ async def get_deploy_status(signature):
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+@app.route('/api/wallet/balance', methods=['GET'])
+@async_route
+async def get_wallet_balance():
+    try:
+        client, _, wallet = await get_solana_client()
+        balance_response = await client.get_balance(wallet.public_key)
+        
+        return jsonify({
+            'success': True,
+            'balance': balance_response.value / 1e9,  # Convert lamports to SOL
+            'balance_lamports': balance_response.value
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting balance: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/wallet/address', methods=['GET'])
+@async_route
+async def get_wallet_address():
+    try:
+        _, _, wallet = await get_solana_client()
+        return jsonify({
+            'success': True,
+            'address': str(wallet.public_key)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting wallet address: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/wallet/transfer', methods=['POST'])
+@async_route
+async def transfer_sol():
+    try:
+        logger.info("Starting SOL transfer...")
+        data = request.json
+        if not data or 'destination' not in data or 'amount' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing destination or amount in request'
+            }), 400
+            
+        client, _, wallet = await get_solana_client()
+        
+        # Convert SOL to lamports
+        amount_sol = float(data['amount'])
+        amount_lamports = int(amount_sol * 1e9)
+        
+        # Create destination pubkey
+        destination = Pubkey.from_string(data['destination'])
+        logger.info(f"Transferring {amount_sol} SOL to {destination}")
+        
+        # Create transfer instruction
+        transfer_ix = transfer(
+            TransferParams(
+                from_pubkey=wallet.public_key,
+                to_pubkey=destination,
+                lamports=amount_lamports
+            )
+        )
+        
+        # Get recent blockhash
+        recent_blockhash = await client.get_latest_blockhash()
+        
+        # Create transaction
+        tx = Transaction()
+        tx.add(transfer_ix)
+        tx.recent_blockhash = recent_blockhash.value.blockhash
+        tx.fee_payer = wallet.public_key
+        
+        # Send transaction with signer
+        logger.info("Sending transaction with signer...")
+        opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+        signature = await client.send_transaction(
+            tx, 
+            wallet.payer,
+            opts=opts
+        )
+        logger.info(f"Transfer complete. Signature: {signature}")
+        
+        return jsonify({
+            'success': True,
+            'signature': str(signature.value),
+            'amount': amount_sol,
+            'destination': str(destination)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error transferring SOL: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
         }), 500
 
 # ✅ Run the Flask App
