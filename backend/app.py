@@ -3,6 +3,16 @@ from flask_cors import CORS
 from db import get_post, get_user, get_payment_schedule, get_transaction, get_payment
 from db import create_post, create_user, create_transaction, create_payment
 import sqlite3
+from solana.rpc.async_api import AsyncClient
+from solana.keypair import Keypair
+from solana.publickey import PublicKey
+from anchorpy import Provider, Program, Wallet
+import json
+import os
+from dotenv import load_dotenv
+import time
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -32,7 +42,21 @@ def check_existing_wallet(user_id):
     except Exception as e:
         return None, str(e)
 
-
+# Solana setup
+async def get_solana_client():
+    client = AsyncClient("https://api.devnet.solana.com")
+    provider = Provider(
+        client,
+        Wallet(Keypair.from_secret_key(json.loads(os.getenv("WALLET_PRIVATE_KEY")))),
+    )
+    
+    # Load IDL from anchor/target/idl/sol_backend.json
+    with open('../anchor/target/idl/sol_backend.json', 'r') as f:
+        idl = json.load(f)
+    
+    program_id = PublicKey(os.getenv("PROGRAM_ID"))
+    program = Program(idl, program_id, provider)
+    return client, program
 
 # ✅ Existing API - Get a Single Loan Post
 @app.route('/api/posts/<int:post_id>', methods=['GET'])
@@ -194,6 +218,102 @@ def _build_cors_preflight_response():
     response.headers.add("Access-Control-Allow-Headers", "Content-Type")
     response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
     return response
+
+# Create loan endpoint
+@app.route('/api/loans', methods=['POST'])
+async def create_loan():
+    try:
+        data = request.json
+        client, program = await get_solana_client()
+        
+        borrower = PublicKey(data['borrowerPublicKey'])
+        loan_amount = data['loanAmount']
+        apy = data['apy']
+        duration = data['duration']
+        timestamp = int(time.time() * 1000)
+
+        tx = await program.rpc["create_loan"](
+            loan_amount,
+            apy,
+            duration,
+            timestamp,
+            accounts={
+                'lender': program.provider.wallet.public_key,
+                'borrower': borrower,
+            }
+        )
+
+        return jsonify({
+            'success': True,
+            'transaction': str(tx),
+            'timestamp': timestamp
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Make payment endpoint
+@app.route('/api/loans/<loan_pda>/payments', methods=['POST'])
+async def make_payment(loan_pda):
+    try:
+        data = request.json
+        client, program = await get_solana_client()
+        
+        payment_amount = data['paymentAmount']
+        borrower_keypair = Keypair.from_secret_key(
+            bytes(data['borrowerPrivateKey'])
+        )
+
+        tx = await program.rpc["make_payment"](
+            payment_amount,
+            accounts={
+                'loanAccount': PublicKey(loan_pda),
+                'borrower': borrower_keypair.public_key,
+                'lender': program.provider.wallet.public_key,
+            },
+            signers=[borrower_keypair]
+        )
+
+        # Get updated loan info
+        loan_account = await program.account["LoanAccount"].fetch(
+            PublicKey(loan_pda)
+        )
+
+        return jsonify({
+            'success': True,
+            'transaction': str(tx),
+            'loanStatus': {
+                'paidAmount': str(loan_account.paid_amount),
+                'isActive': loan_account.is_active
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Get loan details endpoint
+@app.route('/api/loans/<loan_pda>', methods=['GET'])
+async def get_loan(loan_pda):
+    try:
+        client, program = await get_solana_client()
+        
+        loan_account = await program.account["LoanAccount"].fetch(
+            PublicKey(loan_pda)
+        )
+
+        return jsonify({
+            'success': True,
+            'loan': {
+                'lender': str(loan_account.lender),
+                'borrower': str(loan_account.borrower),
+                'amount': str(loan_account.amount),
+                'apy': loan_account.apy,
+                'paidAmount': str(loan_account.paid_amount),
+                'startTime': loan_account.start_time,
+                'duration': loan_account.duration,
+                'isActive': loan_account.is_active
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # ✅ Run the Flask App
 if __name__ == '__main__':
