@@ -17,21 +17,21 @@ export default function Account() {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Account Settings</h1>
+      <h1 className="text-2xl text-black font-bold mb-4">Account Settings</h1>
       <div className="space-y-4">
         <input
           type="email"
           placeholder="New Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="border p-2 w-full"
+          className="border text-black p-2 w-full"
         />
         <input
           type="password"
           placeholder="New Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="border p-2 w-full"
+          className="border text-black p-2 w-full"
         />
         <button onClick={handleUpdate} className="bg-blue-500 text-white px-4 py-2 rounded">
           Update Info
