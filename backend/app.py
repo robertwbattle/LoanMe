@@ -331,11 +331,11 @@ async def create_loan():
         
         logger.info(f"Generated PDA: {loan_pda} with bump: {bump}")
         
-        # Get recent blockhash
+        # First create the loan account on the blockchain
         recent_blockhash = await client.get_latest_blockhash()
         logger.info(f"Recent blockhash: {recent_blockhash.value.blockhash}")
         
-        # Create instruction
+        # Create loan account instruction
         logger.info("Creating program instruction...")
         ix = program.instruction["create_loan"](
             loan_amount,
@@ -352,90 +352,65 @@ async def create_loan():
                 signers=[lender_keypair]
             )
         )
-
-        # Add more detailed logging
-        logger.info(f"Program ID: {program.program_id}")
-        logger.info(f"Instruction data: {ix.data.hex()}")
-        logger.info("Account Metas:")
-        for acc in ix.accounts:
-            logger.info(f"  - {acc.pubkey} (signer: {acc.is_signer}, writable: {acc.is_writable})")
         
-        # Create transaction
-        logger.info("Creating transaction...")
+        # Create transaction for loan creation
         tx = Transaction()
+        tx.add(ix)
         tx.recent_blockhash = recent_blockhash.value.blockhash
         tx.fee_payer = lender_keypair.pubkey()
+        tx.sign(lender_keypair)
         
-        # Create account instruction data
-        space = 0  # Assuming space is 0 for the create account instruction
-        rent = await client.get_minimum_balance_for_rent_exemption(space)
-        create_account_data = struct.pack('<I Q Q', 0, space, rent.value)
-
-        create_account_ix = Instruction(
-            program_id=SYS_PROGRAM_ID,
-            accounts=[
-                AccountMeta(pubkey=lender_keypair.pubkey(), is_signer=True, is_writable=True),
-                AccountMeta(pubkey=loan_pda, is_signer=False, is_writable=True),
-            ],
-            data=create_account_data
+        # Send loan creation transaction
+        logger.info("Sending loan creation transaction...")
+        loan_tx_sig = await client.send_raw_transaction(
+            tx.serialize(),
+            opts=TxOpts(skip_preflight=True)
         )
         
-        logger.info("Adding instructions to transaction...")
-        tx.add(create_account_ix)
-        tx.add(ix)
+        # Wait for confirmation
+        await client.confirm_transaction(loan_tx_sig.value)
+        logger.info(f"Loan creation confirmed: {loan_tx_sig.value}")
         
-        # Sign transaction
-        logger.info("Signing transaction...")
-        tx.sign(lender_keypair)
-        logger.info(f"Transaction signatures: {tx.signatures}")
-        
-        # Send raw transaction
-        logger.info("Sending transaction...")
-        serialized_tx = tx.serialize()
-        logger.info(f"Serialized transaction size: {len(serialized_tx)} bytes")
-        
-        try:
-            tx_sig = await client.send_raw_transaction(
-                serialized_tx,
-                opts=TxOpts(skip_preflight=True)
+        # Now transfer the loan amount to the borrower
+        logger.info("Initiating loan amount transfer...")
+        transfer_ix = transfer(
+            TransferParams(
+                from_pubkey=lender_keypair.pubkey(),
+                to_pubkey=borrower,
+                lamports=loan_amount
             )
-            logger.info(f"Transaction sent with signature: {tx_sig.value}")
-            
-            # Wait for confirmation and get transaction details
-            await client.confirm_transaction(tx_sig.value)
-            
-            # Get transaction details with proper response handling
-            tx_details = await client.get_transaction(
-                tx_sig.value, 
-                max_supported_transaction_version=0
-            )
-            
-            if tx_details and tx_details.value:
-                if hasattr(tx_details.value, 'err') and tx_details.value.err:
-                    logger.error("Transaction Error Details:")
-                    logger.error(f"Error: {tx_details.value.err}")
-                    if hasattr(tx_details.value, 'logs'):
-                        logger.error("Program Logs:")
-                        for log in tx_details.value.logs:
-                            logger.error(log)
-                    return jsonify({
-                        'success': False,
-                        'error': str(tx_details.value.err),
-                        'logs': getattr(tx_details.value, 'logs', [])
-                    }), 500
-            
-            return jsonify({
-                'success': True,
-                'signature': str(tx_sig.value)
-            })
+        )
+        
+        # Create new transaction for transfer
+        transfer_tx = Transaction()
+        transfer_tx.add(transfer_ix)
+        transfer_tx.recent_blockhash = (await client.get_latest_blockhash()).value.blockhash
+        transfer_tx.fee_payer = lender_keypair.pubkey()
+        transfer_tx.sign(lender_keypair)
+        
+        # Send transfer transaction
+        logger.info("Sending transfer transaction...")
+        transfer_tx_sig = await client.send_raw_transaction(
+            transfer_tx.serialize(),
+            opts=TxOpts(skip_preflight=True)
+        )
+        
+        # Wait for transfer confirmation
+        await client.confirm_transaction(transfer_tx_sig.value)
+        logger.info(f"Transfer confirmed: {transfer_tx_sig.value}")
+        
+        return jsonify({
+            'success': True,
+            'loan': {
+                'signature': str(loan_tx_sig.value),
+                'pda': str(loan_pda)
+            },
+            'transfer': {
+                'signature': str(transfer_tx_sig.value),
+                'amount': loan_amount / 1e9  # Convert lamports to SOL
+            }
+        })
 
-        except Exception as e:
-            logger.error(f"Error processing transaction: {str(e)}")
-            return jsonify({
-                'success': False,
-                'error': str(e)
-            }), 500
-        
     except Exception as e:
         logger.error(f"Error in create_loan: {str(e)}")
         logger.exception("Full traceback:")
