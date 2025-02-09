@@ -3,7 +3,7 @@ import { Program } from "@coral-xyz/anchor";
 import { SolBackend } from "../target/types/sol_backend";
 import { PublicKey, SystemProgram } from '@solana/web3.js';
 import { expect } from 'chai';
-
+import { describe, it } from 'mocha';
 describe("sol-backend", () => {
   // Configure the client to use the local cluster.
   const provider = anchor.AnchorProvider.env();
@@ -37,13 +37,13 @@ describe("sol-backend", () => {
     );
 
     const loanAmount = new anchor.BN(100000000);
-    const apy = new anchor.BN(1000);
-    const duration = new anchor.BN(365 * 24 * 60 * 60);
+    const apy = new anchor.BN(1000).toNumber();
+    const duration = new anchor.BN(365 * 24 * 60 * 60).toNumber();
 
     await program.methods
       .createLoan(loanAmount, apy, duration)
       .accounts({
-        loan: loanPDA,
+        loanAccount: loanPDA,
         lender: lender.publicKey,
         borrower: borrower.publicKey,
         systemProgram: anchor.web3.SystemProgram.programId,
@@ -79,17 +79,17 @@ describe("sol-backend", () => {
 
     // Create a loan for 1 SOL with 10% APY
     const loanAmount = new anchor.BN(1_000_000_000); // 1 SOL
-    const apy = new anchor.BN(1000); // 10%
-    const duration = new anchor.BN(365 * 24 * 60 * 60); // 1 year in seconds
+    const apy = new anchor.BN(1000).toNumber(); // Convert to number since we're using u16
+    const duration = new anchor.BN(365 * 24 * 60 * 60).toNumber(); // Convert to number since we're using u32
 
     console.log("Creating loan...");
     await program.methods
       .createLoan(loanAmount, apy, duration)
       .accounts({
+        loanAccount: loanPDA,
         lender: lender.publicKey,
         borrower: borrower.publicKey,
         systemProgram: SystemProgram.programId,
-        loanAccount: loanPDA,
       })
       .rpc();
 
@@ -108,7 +108,7 @@ describe("sol-backend", () => {
     await program.methods
       .makePayment(firstPayment)
       .accounts({
-        loan: loanPDA,
+        loanAccount: loanPDA,
         borrower: borrower.publicKey,
         lender: lender.publicKey,
         systemProgram: SystemProgram.programId,
@@ -129,7 +129,7 @@ describe("sol-backend", () => {
     await program.methods
       .makePayment(finalPayment)
       .accounts({
-        loan: loanPDA,
+        loanAccount: loanPDA,
         borrower: borrower.publicKey,
         lender: lender.publicKey,
         systemProgram: SystemProgram.programId,

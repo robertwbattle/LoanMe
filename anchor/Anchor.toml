@@ -1,17 +1,24 @@
 [toolchain]
+anchor_version = "0.30.1"
+solana_version = "1.18.17"
 
 [features]
 resolution = true
 skip-lint = false
+seeds = false
+custom-heap = false
 
 [programs.localnet]
-sol_backend = "66Q3U69jxDRPo9wo1TbiaTWP61NtoGpUw5tqnMjCzQwk"
+sol_backend = "DGVR8rFF2XAwdihMwjH5WsmyqQfhzU5ZTi4bjiy3Jwwx"
+
+[programs.devnet]
+sol_backend = "DGVR8rFF2XAwdihMwjH5WsmyqQfhzU5ZTi4bjiy3Jwwx"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
+cluster = "Devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

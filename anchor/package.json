@@ -1,0 +1,32 @@
+{
+  "license": "ISC",
+  "scripts": {
+    "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
+    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
+    "prebuild": "rm -rf target/",
+    "build": "anchor build",
+    "postbuild": "mkdir -p target/idl && cp target/types/sol_backend.json target/idl/sol_backend.json",
+    "test": "anchor test",
+    "start": "ts-node app/server.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "0.30.1",
+    "@solana/web3.js": "^1.90.0",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ts-node": "^10.9.2"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.0",
+    "@types/chai": "^4.3.0",
+    "@types/mocha": "^9.0.0",
+    "chai": "^4.3.4",
+    "mocha": "^9.0.3",
+    "prettier": "^2.6.2",
+    "ts-mocha": "^10.0.0",
+    "typescript": "^4.3.5"
+  }
+}

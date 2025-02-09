@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "programs/*"
+    "programs/sol-backend"
 ]
 resolver = "2"
 
@@ -8,6 +8,10 @@ resolver = "2"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
+opt-level = 3
+strip = true
+panic = "abort"
+
 [profile.release.build-override]
 opt-level = 3
 incremental = false

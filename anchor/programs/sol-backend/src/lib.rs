@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("66Q3U69jxDRPo9wo1TbiaTWP61NtoGpUw5tqnMjCzQwk");
+declare_id!("DGVR8rFF2XAwdihMwjH5WsmyqQfhzU5ZTi4bjiy3Jwwx");
 
 #[program]
 pub mod sol_backend {
@@ -14,20 +14,21 @@ pub mod sol_backend {
     pub fn create_loan(
         ctx: Context<CreateLoan>,
         loan_amount: u64,
-        apy: u64,
-        duration: i64,
+        apy: u16,
+        duration: u32,
     ) -> Result<()> {
-        let loan = &mut ctx.accounts.loan;
+        ctx.accounts.validate()?;
+        let loan_account = &mut ctx.accounts.loan_account;
         let clock = Clock::get()?;
 
-        loan.lender = ctx.accounts.lender.key();
-        loan.borrower = ctx.accounts.borrower.key();
-        loan.amount = loan_amount;
-        loan.apy = apy;
-        loan.paid_amount = 0;
-        loan.start_time = clock.unix_timestamp;
-        loan.duration = duration;
-        loan.is_active = true;
+        loan_account.lender = ctx.accounts.lender.key();
+        loan_account.borrower = ctx.accounts.borrower.key();
+        loan_account.amount = loan_amount;
+        loan_account.apy = apy;
+        loan_account.paid_amount = 0;
+        loan_account.start_time = clock.unix_timestamp;
+        loan_account.duration = duration;
+        loan_account.is_active = true;
 
         Ok(())
     }
@@ -36,8 +37,8 @@ pub mod sol_backend {
         ctx: Context<MakePayment>,
         payment_amount: u64,
     ) -> Result<()> {
-        let loan = &mut ctx.accounts.loan;
-        require!(loan.is_active, LoanError::LoanNotActive);
+        let loan_account = &mut ctx.accounts.loan_account;
+        require!(loan_account.is_active, LoanError::LoanNotActive);
         require!(payment_amount > 0, LoanError::InvalidPaymentAmount);
 
         // Transfer payment from borrower to lender
@@ -51,12 +52,12 @@ pub mod sol_backend {
         anchor_lang::system_program::transfer(cpi_context, payment_amount)?;
 
         // Update loan state
-        loan.paid_amount = loan.paid_amount.checked_add(payment_amount)
+        loan_account.paid_amount = loan_account.paid_amount.checked_add(payment_amount)
             .ok_or(LoanError::CalculationError)?;
 
         // Check if loan is fully paid
-        if loan.paid_amount >= loan.amount {
-            loan.is_active = false;
+        if loan_account.paid_amount >= loan_account.amount {
+            loan_account.is_active = false;
         }
 
         Ok(())
@@ -71,11 +72,11 @@ pub struct CreateLoan<'info> {
     #[account(
         init,
         payer = lender,
-        space = 8 + LoanAccount::SPACE,
+        space = LoanAccount::SPACE,
         seeds = [b"loan", lender.key().as_ref(), borrower.key().as_ref()],
         bump
     )]
-    pub loan: Account<'info, LoanAccount>,
+    pub loan_account: Account<'info, LoanAccount>,
     #[account(mut)]
     pub lender: Signer<'info>,
     /// CHECK: This is safe because we only store the pubkey
@@ -83,44 +84,45 @@ pub struct CreateLoan<'info> {
     pub system_program: Program<'info, System>,
 }
 
+impl<'info> CreateLoan<'info> {
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Accounts)]
+#[instruction(payment_amount: u64)]
 pub struct MakePayment<'info> {
-    #[account(
-        mut,
-        seeds = [b"loan", loan.lender.as_ref(), loan.borrower.as_ref()],
-        bump,
-        constraint = loan.borrower == borrower.key()
-    )]
-    pub loan: Account<'info, LoanAccount>,
+    #[account(mut)]
+    pub loan_account: Account<'info, LoanAccount>,
     #[account(mut)]
     pub borrower: Signer<'info>,
-    /// CHECK: This is safe as we only transfer SOL to this account
-    #[account(mut, constraint = loan.lender == lender.key())]
+    /// CHECK: Safe as we only transfer SOL
+    #[account(mut)]
     pub lender: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
 #[account]
+#[derive(Default)]
 pub struct LoanAccount {
     pub lender: Pubkey,
     pub borrower: Pubkey,
     pub amount: u64,
-    pub apy: u64,
+    pub apy: u16,
     pub paid_amount: u64,
     pub start_time: i64,
-    pub duration: i64,
+    pub duration: u32,
     pub is_active: bool,
 }
 
+const DISCRIMINATOR_LENGTH: usize = 8;
+const PUBKEY_LENGTH: usize = 32;
+
 impl LoanAccount {
-    pub const SPACE: usize = 32 + // lender pubkey
-                            32 + // borrower pubkey
-                            8 + // amount
-                            8 + // apy
-                            8 + // paid_amount
-                            8 + // start_time
-                            8 + // duration
-                            1; // is_active
+    pub const SPACE: usize = DISCRIMINATOR_LENGTH +
+        PUBKEY_LENGTH * 2 +  // lender + borrower
+        8 + 2 + 8 + 8 + 4 + 1;  // rest of the fields
 }
 
 #[error_code]
@@ -131,4 +133,6 @@ pub enum LoanError {
     InvalidPaymentAmount,
     #[msg("Calculation error")]
     CalculationError,
+    #[msg("Invalid borrower")]
+    InvalidBorrower,
 }
