@@ -1,12 +1,11 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
+from db import get_post, get_user, get_payment_schedule, get_transaction, get_payment
+from db import create_post, create_user, create_transaction, create_payment
 import sqlite3
 
-
-
 app = Flask(__name__)
-
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # ✅ Existing API - Get a Single Loan Post
 @app.route('/api/posts/<int:post_id>', methods=['GET'])
@@ -74,6 +73,27 @@ def get_activity():
         for post in activities
     ])
 
+
+@app.route('/api/account', methods=['POST', 'OPTIONS'])
+def create_account():
+    if request.method == 'OPTIONS':
+        return _build_cors_preflight_response()
+    elif request.method == 'POST':
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        # solana_address = data.get('solana_address')
+        # solana_private_key = data.get('solana_private_key')
+        # Add logic to create account
+        create_user(password, email, None, None)
+        return jsonify({"success": True, "message": "Account created successfully"})
+
+def _build_cors_preflight_response():
+    response = jsonify({'message': 'CORS preflight'})
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+    response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
+    return response
 
 # ✅ Run the Flask App
 if __name__ == '__main__':
