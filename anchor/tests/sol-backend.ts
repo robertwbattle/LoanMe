@@ -43,10 +43,8 @@ describe("sol-backend", () => {
     await program.methods
       .createLoan(loanAmount, apy, duration)
       .accounts({
-        loanAccount: loanPDA,
         lender: lender.publicKey,
         borrower: borrower.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
       })
       .rpc();
 
@@ -86,10 +84,8 @@ describe("sol-backend", () => {
     await program.methods
       .createLoan(loanAmount, apy, duration)
       .accounts({
-        loanAccount: loanPDA,
         lender: lender.publicKey,
         borrower: borrower.publicKey,
-        systemProgram: SystemProgram.programId,
       })
       .rpc();
 
@@ -111,7 +107,6 @@ describe("sol-backend", () => {
         loanAccount: loanPDA,
         borrower: borrower.publicKey,
         lender: lender.publicKey,
-        systemProgram: SystemProgram.programId,
       })
       .signers([borrower])
       .rpc();
@@ -132,7 +127,6 @@ describe("sol-backend", () => {
         loanAccount: loanPDA,
         borrower: borrower.publicKey,
         lender: lender.publicKey,
-        systemProgram: SystemProgram.programId,
       })
       .signers([borrower])
       .rpc();

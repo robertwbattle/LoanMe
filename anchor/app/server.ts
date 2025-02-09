@@ -5,6 +5,7 @@ import { Program } from "@coral-xyz/anchor";
 import { PublicKey, Connection, Keypair, SystemProgram } from '@solana/web3.js';
 import { SolBackend } from "../target/types/sol_backend";
 import * as dotenv from 'dotenv';
+import { workspace } from "@coral-xyz/anchor";
 
 dotenv.config();
 
@@ -24,16 +25,12 @@ const provider = new anchor.AnchorProvider(
   { commitment: 'processed' }
 );
 
-const programId = new PublicKey(process.env.PROGRAM_ID || '66Q3U69jxDRPo9wo1TbiaTWP61NtoGpUw5tqnMjCzQwk');
+// Initialize anchor provider
+anchor.setProvider(provider);
 
-// Initialize the program with the correct parameter order
-const program = new Program<SolBackend>(
-  {
-    idl: require('../target/idl/sol_backend.json'),
-    provider: provider,
-    programId: programId
-  }
-);
+const programId = new PublicKey(process.env.PROGRAM_ID || 'C3xL6yYf9jyCJfthRE2nWYeLS1RLDkaDnUf2zcrGYtMj');
+const idl = require('../target/idl/sol_backend.json');
+const program = workspace.SolBackend as Program<SolBackend>;
 
 // Create a new loan
 app.post('/loans', async (req, res) => {
@@ -54,14 +51,12 @@ app.post('/loans', async (req, res) => {
     const tx = await program.methods
       .createLoan(
         new anchor.BN(loanAmount),
-        new anchor.BN(apy),
-        new anchor.BN(duration)
+        apy,
+        duration
       )
       .accounts({
-        loanAccount: loanPDA,
         lender: wallet.publicKey,
         borrower: borrower,
-        systemProgram: SystemProgram.programId,
       })
       .rpc();
 
@@ -95,7 +90,6 @@ app.post('/loans/:loanPDA/payments', async (req, res) => {
         loanAccount: new PublicKey(loanPDA),
         borrower: borrower.publicKey,
         lender: wallet.publicKey,
-        systemProgram: SystemProgram.programId,
       })
       .signers([borrower])
       .rpc();
@@ -133,6 +127,33 @@ app.get('/loans/:loanPDA', async (req, res) => {
         duration: loanAccount.duration.toString(),
         isActive: loanAccount.isActive
       }
+    });
+  } catch (error: unknown) {
+    console.error(error);
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    });
+  }
+});
+
+// Add this after your create loan endpoint
+app.post('/loans/payment', async (req, res) => {
+  try {
+    const { loanPDA, paymentAmount } = req.body;
+
+    const tx = await program.methods
+      .makePayment(new anchor.BN(paymentAmount))
+      .accounts({
+        loanAccount: new PublicKey(loanPDA),
+        borrower: wallet.publicKey,
+        lender: wallet.publicKey,
+      })
+      .rpc();
+
+    res.json({
+      success: true,
+      transaction: tx
     });
   } catch (error: unknown) {
     console.error(error);

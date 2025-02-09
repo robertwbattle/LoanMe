@@ -1,6 +1,28 @@
 use anchor_lang::prelude::*;
 
-declare_id!("DGVR8rFF2XAwdihMwjH5WsmyqQfhzU5ZTi4bjiy3Jwwx");
+declare_id!("C3xL6yYf9jyCJfthRE2nWYeLS1RLDkaDnUf2zcrGYtMj");
+
+#[account]
+#[derive(Default)]
+pub struct LoanAccount {
+    pub lender: Pubkey,
+    pub borrower: Pubkey,
+    pub amount: u64,
+    pub apy: u16,
+    pub paid_amount: u64,
+    pub start_time: i64,
+    pub duration: u32,
+    pub is_active: bool,
+}
+
+const DISCRIMINATOR_LENGTH: usize = 8;
+const PUBKEY_LENGTH: usize = 32;
+
+impl LoanAccount {
+    pub const SPACE: usize = DISCRIMINATOR_LENGTH +
+        PUBKEY_LENGTH * 2 +  // lender + borrower
+        8 + 2 + 8 + 8 + 4 + 1;  // amount + apy + paid_amount + start_time + duration + is_active
+}
 
 #[program]
 pub mod sol_backend {
@@ -18,7 +40,7 @@ pub mod sol_backend {
         duration: u32,
     ) -> Result<()> {
         ctx.accounts.validate()?;
-        let loan_account = &mut ctx.accounts.loan_account;
+        let loan_account = &mut ctx.accounts.loanAccount;
         let clock = Clock::get()?;
 
         loan_account.lender = ctx.accounts.lender.key();
@@ -37,7 +59,7 @@ pub mod sol_backend {
         ctx: Context<MakePayment>,
         payment_amount: u64,
     ) -> Result<()> {
-        let loan_account = &mut ctx.accounts.loan_account;
+        let loan_account = &mut ctx.accounts.loanAccount;
         require!(loan_account.is_active, LoanError::LoanNotActive);
         require!(payment_amount > 0, LoanError::InvalidPaymentAmount);
 
@@ -76,7 +98,7 @@ pub struct CreateLoan<'info> {
         seeds = [b"loan", lender.key().as_ref(), borrower.key().as_ref()],
         bump
     )]
-    pub loan_account: Account<'info, LoanAccount>,
+    pub loanAccount: Account<'info, LoanAccount>,
     #[account(mut)]
     pub lender: Signer<'info>,
     /// CHECK: This is safe because we only store the pubkey
@@ -94,35 +116,13 @@ impl<'info> CreateLoan<'info> {
 #[instruction(payment_amount: u64)]
 pub struct MakePayment<'info> {
     #[account(mut)]
-    pub loan_account: Account<'info, LoanAccount>,
+    pub loanAccount: Account<'info, LoanAccount>,
     #[account(mut)]
     pub borrower: Signer<'info>,
     /// CHECK: Safe as we only transfer SOL
     #[account(mut)]
     pub lender: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
-}
-
-#[account]
-#[derive(Default)]
-pub struct LoanAccount {
-    pub lender: Pubkey,
-    pub borrower: Pubkey,
-    pub amount: u64,
-    pub apy: u16,
-    pub paid_amount: u64,
-    pub start_time: i64,
-    pub duration: u32,
-    pub is_active: bool,
-}
-
-const DISCRIMINATOR_LENGTH: usize = 8;
-const PUBKEY_LENGTH: usize = 32;
-
-impl LoanAccount {
-    pub const SPACE: usize = DISCRIMINATOR_LENGTH +
-        PUBKEY_LENGTH * 2 +  // lender + borrower
-        8 + 2 + 8 + 8 + 4 + 1;  // rest of the fields
 }
 
 #[error_code]

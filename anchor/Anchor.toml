@@ -2,6 +2,9 @@
 anchor_version = "0.30.1"
 solana_version = "1.18.17"
 
+[workspace]
+members = ["programs/sol-backend"]
+
 [features]
 resolution = true
 skip-lint = false
@@ -9,10 +12,10 @@ seeds = false
 custom-heap = false
 
 [programs.localnet]
-sol_backend = "DGVR8rFF2XAwdihMwjH5WsmyqQfhzU5ZTi4bjiy3Jwwx"
+sol-backend = "C3xL6yYf9jyCJfthRE2nWYeLS1RLDkaDnUf2zcrGYtMj"
 
 [programs.devnet]
-sol_backend = "DGVR8rFF2XAwdihMwjH5WsmyqQfhzU5ZTi4bjiy3Jwwx"
+sol-backend = "C3xL6yYf9jyCJfthRE2nWYeLS1RLDkaDnUf2zcrGYtMj"
 
 [registry]
 url = "https://api.apr.dev"
