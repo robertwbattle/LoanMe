@@ -1,5 +1,8 @@
 import sqlite3
+import sys
+import json
 from datetime import datetime
+import os
 
 def setup_database():
     # Connect to SQLite database
@@ -11,11 +14,12 @@ def setup_database():
     -- Users Table
     CREATE TABLE IF NOT EXISTS Users (
         user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         email TEXT UNIQUE NOT NULL,
         score REAL DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        solana_address TEXT UNIQUE,
+        solana_private_key TEXT
     );
 
     -- Posts Table
@@ -75,17 +79,16 @@ def setup_database():
     conn.close()
 
 # # Call the setup function to create the database and tables
-# setup_database()
 
 # Basic functions for adding and changing each field
 
-def add_user(username, password_hash, email, score=0):
+def add_user(password_hash, email, score=0, solana_address=None, solana_private_key=None):
     conn = sqlite3.connect('loan_platform.db')
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO Users (username, password_hash, email, score)
-        VALUES (?, ?, ?, ?)
-    ''', (username, password_hash, email, score))
+        INSERT INTO Users (password_hash, email, score, solana_address, solana_private_key)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (password_hash, email, score, solana_address, solana_private_key))
     conn.commit()
     conn.close()
 
@@ -224,3 +227,63 @@ def get_payment(payment_id):
     payment = cursor.fetchone()
     conn.close()
     return payment
+
+def create_post(account_name, loan_amount, interest_rate, payment_schedule):
+    conn = sqlite3.connect('loan_platform.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO Posts (account_name, loan_amount, interest_rate, payment_schedule)
+        VALUES (?, ?, ?, ?)
+    ''', (account_name, loan_amount, interest_rate, payment_schedule))
+    conn.commit()
+    conn.close()
+
+def create_user(password_hash, email, solana_address=None, solana_private_key=None):
+    conn = sqlite3.connect('loan_platform.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO Users (password_hash, email, solana_address, solana_private_key)
+        VALUES (?, ?, ?, ?)
+    ''', (password_hash, email, solana_address, solana_private_key))
+    conn.commit()
+    conn.close()
+
+def create_transaction(lender_id, borrower_id, post_id, loan_amount, interest_rate, payment_schedule):
+    conn = sqlite3.connect('loan_platform.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO Transactions (lender_id, borrower_id, post_id, loan_amount, interest_rate, payment_schedule)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (lender_id, borrower_id, post_id, loan_amount, interest_rate, payment_schedule))
+    conn.commit()
+    conn.close()
+
+def create_payment(transaction_id, due_date, amount_due):
+    conn = sqlite3.connect('loan_platform.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO Payments (transaction_id, due_date, amount_due)
+        VALUES (?, ?, ?)
+    ''', (transaction_id, due_date, amount_due))
+    conn.commit()
+    conn.close()
+
+if __name__ == "__main__":
+    command = sys.argv[1]
+
+    if command == "get_user":
+        user_id = sys.argv[2]
+        user = get_user(user_id)
+        print(json.dumps(user))
+    elif command == "add_user":
+        password_hash = sys.argv[2]
+        email = sys.argv[3]
+        score = float(sys.argv[4])
+        solana_address = sys.argv[5] if len(sys.argv) > 5 else None
+        solana_private_key = sys.argv[6] if len(sys.argv) > 6 else None
+        add_user(password_hash, email, score, solana_address, solana_private_key)
+        print(json.dumps({"message": "User added successfully"}))
+    else:
+        # setup database
+        os.remove('loan_platform.db')
+        setup_database()
