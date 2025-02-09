@@ -2,6 +2,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState, useEffect } from "react";
+import { Github, Twitter } from "@/components/shared/icons";
+import Card from "@/components/home/card";
 
 export default function Home() {
   const [user, setUser] = useState(null);
@@ -19,16 +21,40 @@ export default function Home() {
   };
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 min-h-screen p-8 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <div className="flex flex-col items-center justify-center gap-8">
-        <h1 className="text-4xl font-bold">Welcome to LoanMe</h1>
-        <div className="flex flex-col gap-4 w-full max-w-xs">
+    <main className="flex min-h-screen flex-col items-center justify-center p-8">
+      <div className="z-10 w-full max-w-xl px-5 xl:px-0">
+        <a
+          href="#"
+          className="mx-auto mb-5 flex max-w-fit animate-fade-up items-center justify-center space-x-2 overflow-hidden rounded-full bg-blue-100 px-7 py-2 transition-colors hover:bg-blue-200"
+        >
+          <Twitter className="h-5 w-5 text-[#1d9bf0]" />
+          <p className="text-sm font-semibold text-[#1d9bf0]">
+            Welcome to LoanMe
+          </p>
+        </a>
+        <h1
+          className="animate-fade-up bg-gradient-to-br from-black to-stone-500 bg-clip-text text-center font-display text-4xl font-bold tracking-[-0.02em] text-transparent md:text-7xl md:leading-[5rem]"
+          style={{ animationDelay: "0.15s" }}
+        >
+          Private credit public impact
+        </h1>
+        <p
+          className="mt-6 animate-fade-up text-center text-gray-500 md:text-xl"
+          style={{ animationDelay: "0.25s" }}
+        >
+          Decentralized lending platform with average 5.6% APY
+        </p>
+        
+        <div
+          className="mx-auto mt-6 flex animate-fade-up items-center justify-center space-x-5"
+          style={{ animationDelay: "0.3s" }}
+        >
           {user ? (
             <>
-              <p className="text-lg">Welcome, {user.email}</p>
+              <p className="text-lg text-gray-700">Welcome, {user.email}</p>
               <button
                 onClick={handleLogout}
-                className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-[#9BB67C] text-[#F5F1DA] gap-2 hover:bg-[#EEBB4D] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
+                className="group flex max-w-fit items-center justify-center space-x-2 rounded-full border border-black bg-black px-5 py-2 text-sm text-white transition-colors hover:bg-white hover:text-black"
               >
                 Log Out
               </button>
@@ -36,12 +62,12 @@ export default function Home() {
           ) : (
             <>
               <Link href="/account/create">
-                <button className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-[#9BB67C] text-[#F5F1DA] gap-2 hover:bg-[#EEBB4D] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5">
+                <button className="group flex max-w-fit items-center justify-center space-x-2 rounded-full border border-black bg-black px-5 py-2 text-sm text-white transition-colors hover:bg-white hover:text-black">
                   Create Account
                 </button>
               </Link>
               <Link href="/account/login">
-                <button className="rounded-full border border-solid border-[#E3DFC8] transition-colors flex items-center justify-center hover:bg-[#F5F1DA] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5">
+                <button className="flex max-w-fit items-center justify-center space-x-2 rounded-full border border-gray-300 bg-white px-5 py-2 text-sm text-gray-600 shadow-md transition-colors hover:border-gray-800">
                   Log In
                 </button>
               </Link>
@@ -49,14 +75,22 @@ export default function Home() {
           )}
         </div>
       </div>
-      <div className="flex flex-col items-center justify-center gap-8 p-8 sm:p-20 bg-[url('/green-lines.svg')] bg-no-repeat bg-center bg-[length:120%] bg-[#E3DFC8]">
-        <h2 className="text-2xl font-semibold">Private credit made public.</h2>
-        <ul className="list-none text-left">
-          <li className="mb-2">Average loan of <strong>$121</strong>.</li>
-          <li className="mb-2"><strong>5.6%</strong> Average APY.</li>
-          <li className="mb-2">Decentralized and <strong>secure</strong>.</li>
-        </ul>
+
+      <div className="my-10 grid w-full max-w-screen-xl animate-fade-up grid-cols-1 gap-5 px-5 md:grid-cols-3 xl:px-0">
+        <Card
+          title="Average Loan Size"
+          description="Our platform facilitates an average loan size of \$121, making credit accessible to everyone."
+          large={true}
+        />
+        <Card
+          title="Competitive APY"
+          description="Earn an average of 5.6% APY on your investments while helping others access credit."
+        />
+        <Card
+          title="Secure Platform"
+          description="Built on blockchain technology ensuring transparent and secure transactions."
+        />
       </div>
-    </div>
+    </main>
   );
 }
