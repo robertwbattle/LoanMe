@@ -20,6 +20,34 @@ C3xL6yYf9jyCJfthRE2nWYeLS1RLDkaDnUf2zcrGYtMj
 - Node.js and npm
 - Anchor Framework
 
+## Wallet Setup
+
+1. Install Solana CLI tools if you haven't already:
+```bash
+sh -c "$(curl -sSfL https://release.solana.com/stable/install)"
+```
+
+2. Create a new Solana wallet:
+```bash
+solana-keygen new --outfile ~/.config/solana/devnet.json
+```
+
+3. Set the CLI config to use devnet:
+```bash
+solana config set --url devnet
+solana config set --keypair ~/.config/solana/devnet.json
+```
+
+4. Get some devnet SOL:
+```bash
+solana airdrop 2
+```
+
+You can check your balance with:
+```bash
+solana balance
+```
+
 ## Installation & Setup
 
 1. Clone the repository and install dependencies:
