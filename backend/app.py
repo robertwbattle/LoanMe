@@ -290,79 +290,6 @@ def _build_cors_preflight_response():
     response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
     return response
 
-# Create loan endpoint
-@app.route('/api/loans', methods=['POST'])
-def create_loan():
-    try:
-        data = request.json
-        
-        # Extract loan details
-        lender_id = data['lender_id']
-        loan_amount = int(data['loanAmount'])
-        apy = int(data['apy'])
-        duration = int(data['duration'])
-        payment_schedule_id = data.get('payment_schedule_id')
-        
-        logger.info("=== Creating New Loan Post ===")
-        logger.info(f"Loan details:")
-        logger.info(f"- Lender ID: {lender_id}")
-        logger.info(f"- Amount: {loan_amount}")
-        logger.info(f"- APY: {apy}")
-        logger.info(f"- Duration: {duration}")
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # First, verify the lender exists and get their wallet
-        cursor.execute('''
-            SELECT solana_address, solana_private_key 
-            FROM Users 
-            WHERE user_id = ?
-        ''', (lender_id,))
-        
-        lender_data = cursor.fetchone()
-        if not lender_data:
-            raise Exception("Lender not found")
-            
-        lender_address, lender_private_key = lender_data
-        
-        # Insert new loan post
-        cursor.execute('''
-            INSERT INTO Posts (
-                user_id, 
-                post_type, 
-                loan_amount, 
-                interest_rate, 
-                payment_schedule_id, 
-                duration,
-                status,
-                lender_wallet
-            )
-            VALUES (?, 'lend', ?, ?, ?, ?, 'pending', ?)
-        ''', (lender_id, loan_amount, apy, payment_schedule_id, duration, lender_address))
-        
-        post_id = cursor.lastrowid
-        
-        conn.commit()
-        conn.close()
-        
-        return jsonify({
-            'success': True,
-            'post_id': post_id,
-            'message': 'Loan post created successfully',
-            'details': {
-                'amount': loan_amount,
-                'apy': apy,
-                'duration': duration,
-                'lender_wallet': lender_address
-            }
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in create_loan: {str(e)}")
-        logger.exception("Full traceback:")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 # Make payment endpoint
 @app.route('/api/loans/<loan_pda>/payments', methods=['POST'])
 @async_route
@@ -1070,7 +997,7 @@ async def fetch_solana_balance(wallet_address):
             'error': str(e)
         }), 500
 
-@app.route('/api/posts', methods=['POST'])
+@app.route('/api/loans', methods=['POST'])
 def create_post():
     try:
         data = request.json
