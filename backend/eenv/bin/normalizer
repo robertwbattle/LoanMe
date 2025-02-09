@@ -1,4 +1,4 @@
-#!/Users/willem/Scripts/LoanMe-1/backend/myenv/bin/python3
+#!/Users/hossain/git/LoanMe/backend/eenv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

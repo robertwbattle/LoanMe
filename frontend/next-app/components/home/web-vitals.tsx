@@ -3,7 +3,13 @@
 import { motion } from "framer-motion";
 import CountingNumbers from "@/components/shared/counting-numbers";
 
-export default function WebVitals() {
+interface WebVitalsProps {
+  percentage: number;
+  prefix?: string;
+  suffix?: string; // Add this line for suffix
+}
+
+export default function WebVitals({ percentage, prefix, suffix }: WebVitalsProps) {
   return (
     <div className="relative h-full w-full">
       <motion.svg
@@ -29,11 +35,14 @@ export default function WebVitals() {
           stroke="#22C55E"
         />
       </motion.svg>
-      <CountingNumbers
-        value={100}
-        duration={2500}
-        className="absolute inset-0 mx-auto flex items-center justify-center font-display text-5xl text-green-500"
-      />
+      <div className="absolute inset-0 mx-auto flex items-center justify-center font-display text-5xl text-green-500">
+        {prefix && <span>{prefix}</span>}
+        <CountingNumbers
+          value={percentage}
+          duration={2500}
+        />
+        {suffix && <span>{suffix}</span>}
+      </div>
     </div>
   );
 }
