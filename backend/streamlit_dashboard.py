@@ -6,9 +6,60 @@ import os
 from dotenv import load_dotenv
 import json
 import ast
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Function definitions first
+def convert_private_key_to_array(private_key_str):
+    """Convert string representation of private key array back to array of integers"""
+    try:
+        return ast.literal_eval(private_key_str)
+    except:
+        st.error("Error converting private key string to array")
+        return None
+
+def get_user_stats():
+    """Get simplified user statistics from database"""
+    conn = sqlite3.connect('loan_platform.db')
+    
+    # Loan amounts by user
+    loan_amounts = pd.read_sql_query("""
+        SELECT 
+            u.email,
+            COUNT(p.post_id) as total_loans,
+            SUM(p.loan_amount) as total_amount,
+            AVG(p.interest_rate) as avg_interest
+        FROM Users u
+        LEFT JOIN Posts p ON u.user_id = p.user_id
+        GROUP BY u.email
+    """, conn)
+    
+    # Activity over time (last 30 days)
+    activity = pd.read_sql_query("""
+        SELECT 
+            DATE(created_at) as date,
+            COUNT(*) as num_posts
+        FROM Posts
+        GROUP BY DATE(created_at)
+        ORDER BY date DESC
+        LIMIT 30
+    """, conn)
+    
+    # Post status distribution
+    status_dist = pd.read_sql_query("""
+        SELECT 
+            status,
+            COUNT(*) as count
+        FROM Posts
+        GROUP BY status
+    """, conn)
+    
+    conn.close()
+    return loan_amounts, activity, status_dist
 
 # Function to fetch data from the database
 def fetch_data(query):
@@ -62,17 +113,8 @@ def get_program_info(program_id):
     except Exception as err:
         return {'success': False, 'error': f'Other error occurred: {err}'}
 
-def convert_private_key_to_array(private_key_str):
-    """Convert string representation of private key array back to array of integers"""
-    try:
-        # Remove any whitespace and convert to array of integers
-        return ast.literal_eval(private_key_str)
-    except:
-        st.error("Error converting private key string to array")
-        return None
-
 # Streamlit app
-st.title("LoanMe Dashboard")
+st.title("Loan Platform Dashboard")
 
 # Wallet Address
 st.header("Admin Wallet Address")
@@ -169,29 +211,92 @@ if wallet_balance['success']:
 else:
     st.error(f"Failed to fetch wallet balance: {wallet_balance['error']}")
 
-# Transfer SOL
-st.header("Transfer SOL")
-destination = st.text_input("Destination Address")
-amount = st.text_input("Amount (SOL)")
-if st.button("Send SOL"):
-    if destination and amount:
-        result = transfer_sol(destination, amount)
-        if result['success']:
-            st.success(f"Transfer successful! Signature: {result['signature']}")
-        else:
-            st.error(f"Transfer failed: {result['error']}")
-    else:
-        st.error("Please enter both destination address and amount.")
-
-# Add to sidebar
+# Sidebar
 with st.sidebar:
     st.header("Loan Actions")
     action = st.selectbox(
         "Select Action",
-        ["Check Balance", "Create Loan", "Transfer SOL"]
+        ["Analytics", "Check Balance", "Create Loan", "Transfer SOL"]
     )
 
-if action == "Check Balance":
+# Main content
+if action == "Analytics":
+    st.header("Analytics Dashboard")
+    
+    try:
+        loan_amounts, activity, status_dist = get_user_stats()
+        
+        # Key metrics at the top
+        st.header("Key Metrics")
+        metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
+
+        with metrics_col1:
+            total_users = len(loan_amounts)
+            st.metric("Total Users", total_users)
+
+        with metrics_col2:
+            total_loans = loan_amounts['total_loans'].sum()
+            st.metric("Total Loans", total_loans)
+
+        with metrics_col3:
+            total_volume = loan_amounts['total_amount'].sum()
+            st.metric("Total Volume (SOL)", f"{total_volume:.2f}")
+
+        # Graphs
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Loan status distribution
+            st.subheader("Loan Status Distribution")
+            fig = px.pie(status_dist,
+                        values='count',
+                        names='status',
+                        title='Current Loan Status')
+            st.plotly_chart(fig)
+
+            # User activity
+            st.subheader("User Activity")
+            fig = px.bar(loan_amounts,
+                        x='email',
+                        y='total_loans',
+                        title='Loans per User')
+            st.plotly_chart(fig)
+
+        with col2:
+            # Activity over time
+            st.subheader("Platform Activity")
+            fig = px.line(activity,
+                         x='date',
+                         y='num_posts',
+                         title='Daily Post Activity')
+            st.plotly_chart(fig)
+
+            # Average interest rates
+            st.subheader("Interest Rates by User")
+            fig = px.scatter(loan_amounts,
+                           x='total_amount',
+                           y='avg_interest',
+                           hover_data=['email'],
+                           title='Average Interest Rates vs Total Amount')
+            st.plotly_chart(fig)
+
+        # Show raw data in expandable section
+        with st.expander("View Raw Data"):
+            st.subheader("Loan Data by User")
+            st.dataframe(loan_amounts)
+            
+            st.subheader("Status Distribution")
+            st.dataframe(status_dist)
+            
+            st.subheader("Activity Over Time")
+            st.dataframe(activity)
+            
+    except Exception as e:
+        st.error(f"Error loading analytics: {str(e)}")
+        st.error("Detailed error info for debugging:")
+        st.exception(e)
+
+elif action == "Check Balance":
     st.header("Check Wallet Balance")
     wallet_address = st.text_input("Enter Wallet Address")
     
@@ -212,7 +317,6 @@ elif action == "Create Loan":
     loan_amount = st.number_input("Loan Amount (SOL)", min_value=0.1, step=0.1)
     interest_rate = st.number_input("Interest Rate (%)", min_value=0.1, step=0.1)
     
-    # Radio button to select if user is lender or borrower
     role = st.radio("I am a:", ("Lender", "Borrower"))
     wallet_address = st.text_input("Your Wallet Address")
     
@@ -226,7 +330,7 @@ elif action == "Create Loan":
             }
             
             response = requests.post(
-                "http://127.0.0.1:5000/api/posts",
+                "http://127.0.0.1:5000/api/loans",
                 json=payload
             )
             
@@ -243,64 +347,60 @@ elif action == "Create Loan":
 elif action == "Transfer SOL":
     st.header("Transfer SOL")
     
-    # Get sender's public key
     sender_public = st.text_input("From (Public Key)")
-    
-    # Get recipient's public key
     recipient_public = st.text_input("To (Public Key)")
-    
-    # Amount to transfer
     amount = st.number_input("Amount (SOL)", min_value=0.000001, step=0.1)
     
     if st.button("Transfer"):
-        try:
-            # First, fetch the sender's private key from the database
-            conn = sqlite3.connect('loan_platform.db')
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT solana_private_key 
-                FROM Users 
-                WHERE solana_address = ?
-            ''', (sender_public,))
-            
-            result = cursor.fetchone()
-            conn.close()
-            
-            if not result:
-                st.error("Sender's wallet not found in database")
-                return
+        if not (sender_public and recipient_public and amount):
+            st.error("Please fill in all fields")
+        else:
+            try:
+                conn = sqlite3.connect('loan_platform.db')
+                cursor = conn.cursor()
                 
-            private_key_str = result[0]
-            private_key_array = convert_private_key_to_array(private_key_str)
-            
-            if not private_key_array:
-                st.error("Invalid private key format")
-                return
-            
-            # Make the transfer request
-            payload = {
-                "private_key": private_key_array,
-                "wallet_to": recipient_public,
-                "transfer_amount": amount
-            }
-            
-            response = requests.post(
-                "http://127.0.0.1:5000/api/solana/transfer",
-                json=payload
-            )
-            
-            if response.ok:
-                data = response.json()
-                if data['success']:
-                    st.success(f"Transfer successful!")
-                    st.write("Transaction Details:")
-                    st.json({
-                        "signature": data['signature'],
-                        "amount": data['amount'],
-                        "recipient": data['recipient']
-                    })
+                cursor.execute('''
+                    SELECT solana_private_key 
+                    FROM Users 
+                    WHERE solana_address = ?
+                ''', (sender_public,))
+                
+                result = cursor.fetchone()
+                conn.close()
+                
+                if not result:
+                    st.error("Sender's wallet not found in database")
                 else:
-                    st.error(f"Error: {data.get('error', 'Unknown error')}")
-        except Exception as e:
-            st.error(f"Error during transfer: {str(e)}")
+                    private_key_str = result[0]
+                    private_key_array = convert_private_key_to_array(private_key_str)
+                    
+                    if not private_key_array:
+                        st.error("Invalid private key format")
+                    else:
+                        payload = {
+                            "private_key": private_key_array,
+                            "wallet_to": recipient_public,
+                            "transfer_amount": amount
+                        }
+                        
+                        response = requests.post(
+                            "http://127.0.0.1:5000/api/solana/transfer",
+                            json=payload
+                        )
+                        
+                        if response.ok:
+                            data = response.json()
+                            if data['success']:
+                                st.success("Transfer successful!")
+                                st.json({
+                                    "signature": data['signature'],
+                                    "amount": data['amount'],
+                                    "recipient": data['recipient']
+                                })
+                            else:
+                                st.error(f"Error: {data.get('error', 'Unknown error')}")
+                        else:
+                            st.error("Failed to make transfer request")
+                            
+            except Exception as e:
+                st.error(f"Error during transfer: {str(e)}")
